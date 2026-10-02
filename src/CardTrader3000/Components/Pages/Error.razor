@@ -1,0 +1,28 @@
+@page "/Error"
+@using System.Diagnostics
+@using Microsoft.AspNetCore.Http
+@attribute [ExcludeFromInteractiveRouting]
+
+<PageTitle>Error · CardTrader3000</PageTitle>
+
+<div class="card">
+    <div class="card-body">
+        <h3 class="card-title text-danger">Error.</h3>
+        <p class="text-muted">An error occurred while processing your request.</p>
+        @if (ShowRequestId)
+        {
+            <p><strong>Request ID:</strong> <code>@RequestId</code></p>
+        }
+    </div>
+</div>
+
+@code {
+    [CascadingParameter]
+    private HttpContext? HttpContext { get; set; }
+
+    private string? RequestId { get; set; }
+    private bool ShowRequestId => !string.IsNullOrEmpty(RequestId);
+
+    protected override void OnInitialized() =>
+        RequestId = Activity.Current?.Id ?? HttpContext?.TraceIdentifier;
+}

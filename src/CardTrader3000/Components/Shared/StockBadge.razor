@@ -1,0 +1,14 @@
+<span class="badge @CssClass">@Label</span>
+
+@code {
+    [Parameter, EditorRequired] public InventoryStatus Status { get; set; }
+
+    private string CssClass => Status switch
+    {
+        InventoryStatus.InStock => "badge-outline-primary",
+        InventoryStatus.Listed => "badge-outline-info",
+        _ => "badge-outline-secondary"
+    };
+
+    private string Label => Status == InventoryStatus.InStock ? "In stock" : Status.ToString();
+}

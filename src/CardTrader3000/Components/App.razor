@@ -1,0 +1,38 @@
+@using Microsoft.AspNetCore.Http
+
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <base href="/" />
+    <link rel="stylesheet" href="@Assets["lib/corona/vendors/mdi/css/materialdesignicons.min.css"]" />
+    <link rel="stylesheet" href="@Assets["lib/corona/vendors/css/vendor.bundle.base.css"]" />
+    <link rel="stylesheet" href="@Assets["lib/corona/css/style.css"]" />
+    <link rel="stylesheet" href="@Assets["app.css"]" />
+    <link rel="icon" type="image/png" href="favicon.png" />
+    <ImportMap />
+    <HeadOutlet @rendermode="PageRenderMode" />
+</head>
+
+<body>
+    <Routes @rendermode="PageRenderMode" />
+
+    @* Bootstrap 5 + jQuery bundle from Corona (dropdowns, collapse, modals via data-bs-* attributes).
+       Corona's off-canvas/misc.js are not loaded: the sidebar toggles are handled in MainLayout instead,
+       because Blazor re-renders the DOM those scripts would bind to. *@
+    <script src="@Assets["lib/corona/vendors/js/vendor.bundle.base.js"]"></script>
+    <script src="@Assets["_framework/blazor.web.js"]"></script>
+</body>
+
+</html>
+
+@code {
+    [CascadingParameter]
+    private HttpContext HttpContext { get; set; } = default!;
+
+    // Pages marked [ExcludeFromInteractiveRouting] (e.g. /Error) render as static SSR.
+    private IComponentRenderMode? PageRenderMode =>
+        HttpContext.AcceptsInteractiveRouting() ? InteractiveServer : null;
+}

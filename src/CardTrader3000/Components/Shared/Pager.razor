@@ -1,0 +1,51 @@
+@* Compact pager: first/prev, a window of page numbers, next/last. *@
+@if (PageCount > 1)
+{
+    <nav aria-label="Pagination">
+        <ul class="pagination pagination-sm mb-0 flex-wrap">
+            <li class="page-item @(Page <= 1 ? "disabled" : null)">
+                <button class="page-link" @onclick="() => GoAsync(1)" aria-label="First">«</button>
+            </li>
+            <li class="page-item @(Page <= 1 ? "disabled" : null)">
+                <button class="page-link" @onclick="() => GoAsync(Page - 1)" aria-label="Previous">‹</button>
+            </li>
+
+            @foreach (var p in Window())
+            {
+                var pageNumber = p;
+                <li class="page-item @(pageNumber == Page ? "active" : null)">
+                    <button class="page-link" @onclick="() => GoAsync(pageNumber)">@pageNumber</button>
+                </li>
+            }
+
+            <li class="page-item @(Page >= PageCount ? "disabled" : null)">
+                <button class="page-link" @onclick="() => GoAsync(Page + 1)" aria-label="Next">›</button>
+            </li>
+            <li class="page-item @(Page >= PageCount ? "disabled" : null)">
+                <button class="page-link" @onclick="() => GoAsync(PageCount)" aria-label="Last">»</button>
+            </li>
+        </ul>
+    </nav>
+}
+
+@code {
+    [Parameter, EditorRequired] public int Page { get; set; }
+    [Parameter, EditorRequired] public int PageCount { get; set; }
+    [Parameter] public EventCallback<int> PageChanged { get; set; }
+
+    private const int WindowSize = 5;
+
+    private IEnumerable<int> Window()
+    {
+        var start = Math.Max(1, Page - WindowSize / 2);
+        var end = Math.Min(PageCount, start + WindowSize - 1);
+        start = Math.Max(1, end - WindowSize + 1);
+        return Enumerable.Range(start, end - start + 1);
+    }
+
+    private async Task GoAsync(int page)
+    {
+        page = Math.Clamp(page, 1, PageCount);
+        if (page != Page) await PageChanged.InvokeAsync(page);
+    }
+}

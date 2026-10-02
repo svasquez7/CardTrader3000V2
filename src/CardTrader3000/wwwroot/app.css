@@ -1,0 +1,94 @@
+/* CardTrader3000 additions on top of the Corona dark theme. */
+
+/* Text brand in place of Corona's logo images */
+.ct-brand {
+    color: #ffffff;
+    font-weight: 700;
+    font-size: 1.35rem;
+    letter-spacing: -0.02em;
+    text-decoration: none;
+}
+.ct-brand span { color: #0090e7; }
+.ct-brand-mini {
+    color: #0090e7;
+    font-weight: 700;
+    font-size: 1.25rem;
+    text-decoration: none;
+}
+
+/* Blazor's NavLink puts .active on the <a>, Corona expects it on the <li>. Mirror Corona's rule. */
+.sidebar .nav .nav-item .nav-link.active {
+    background: #0f1015;
+    position: relative;
+}
+.sidebar .nav .nav-item .nav-link.active:before {
+    content: "";
+    width: 3px;
+    height: 100%;
+    background: #0090e7;
+    display: inline-block;
+    position: absolute;
+    left: 0;
+    top: 0;
+}
+.sidebar .nav .nav-item .nav-link.active .menu-title,
+.sidebar .nav .nav-item .nav-link.active i {
+    color: #ffffff;
+}
+
+/* Blazor error / reconnect UI */
+#blazor-error-ui {
+    background: #191c24;
+    color: #ffffff;
+    border-top: 2px solid #fc424a;
+    bottom: 0;
+    box-shadow: 0 -1px 2px rgba(0, 0, 0, 0.4);
+    box-sizing: border-box;
+    display: none;
+    left: 0;
+    padding: 0.6rem 1.25rem 0.7rem 1.25rem;
+    position: fixed;
+    width: 100%;
+    z-index: 1000;
+}
+#blazor-error-ui .reload { color: #0090e7; }
+#blazor-error-ui .dismiss {
+    cursor: pointer;
+    position: absolute;
+    right: 0.75rem;
+    top: 0.5rem;
+}
+
+h1:focus { outline: none; }
+
+/* Corona styles .form-control dark but leaves Bootstrap's light .form-select. Match them. */
+.form-select {
+    background-color: #2A3038;
+    color: #ffffff;
+    border-color: #2c2e33;
+    background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3e%3cpath fill='none' stroke='%23ffffff' stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M2 5l6 6 6-6'/%3e%3c/svg%3e");
+}
+.form-select:focus { background-color: #2A3038; color: #ffffff; }
+.form-select option { background-color: #191c24; color: #ffffff; }
+
+/* Blazor-rendered modal (no Bootstrap JS): the wrapper doubles as the backdrop. */
+.ct-modal {
+    background: rgba(0, 0, 0, 0.65);
+    overflow-y: auto;
+}
+.ct-modal .modal-content { background-color: #191c24; }
+
+/* Clickable table rows and sortable headers */
+.ct-clickable-rows tbody tr { cursor: pointer; }
+.ct-clickable-rows tbody tr:hover { background-color: rgba(255, 255, 255, 0.04); }
+.ct-sortable { cursor: pointer; user-select: none; white-space: nowrap; }
+.ct-sortable:hover { color: #ffffff; }
+.ct-sortable .mdi { font-size: 0.9rem; }
+
+/* Pager buttons look like Corona's links */
+.pagination .page-link { background-color: #191c24; border-color: #2c2e33; color: #ffffff; }
+.pagination .page-item.active .page-link { background-color: #0090e7; border-color: #0090e7; }
+.pagination .page-item.disabled .page-link { background-color: #191c24; color: #6c7293; }
+
+/* Corona leaves input text dark on its dark input background. */
+.form-control, .form-control:focus { color: #ffffff; }

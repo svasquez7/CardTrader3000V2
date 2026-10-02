@@ -1,0 +1,37 @@
+<nav class="sidebar sidebar-offcanvas @(MobileOpen ? "active" : null)" id="sidebar">
+    <div class="sidebar-brand-wrapper d-none d-lg-flex align-items-center justify-content-center fixed-top">
+        <a class="sidebar-brand brand-logo ct-brand" href="">Card<span>Trader</span>3000</a>
+        <a class="sidebar-brand brand-logo-mini ct-brand-mini" href="">CT</a>
+    </div>
+
+    <ul class="nav">
+        <li class="nav-item nav-category">
+            <span class="nav-link">Navigation</span>
+        </li>
+
+        @foreach (var item in Items)
+        {
+            <li class="nav-item menu-items">
+                <NavLink class="nav-link" href="@item.Href" Match="@item.Match" @onclick="OnNavigate">
+                    <span class="menu-icon"><i class="mdi @item.Icon"></i></span>
+                    <span class="menu-title">@item.Title</span>
+                </NavLink>
+            </li>
+        }
+    </ul>
+</nav>
+
+@code {
+    [Parameter] public bool MobileOpen { get; set; }
+    [Parameter] public EventCallback OnNavigate { get; set; }
+
+    private sealed record NavItem(string Title, string Href, string Icon, NavLinkMatch Match = NavLinkMatch.Prefix);
+
+    private static readonly NavItem[] Items =
+    [
+        new("Dashboard", "", "mdi-speedometer", NavLinkMatch.All),
+        new("Import", "import", "mdi-file-upload-outline"),
+        new("Inventory", "inventory", "mdi-cards-outline"),
+        new("History", "history", "mdi-history")
+    ];
+}

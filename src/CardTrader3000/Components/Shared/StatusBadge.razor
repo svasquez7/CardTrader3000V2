@@ -1,0 +1,21 @@
+@* Corona outline badge for an import batch status. *@
+<span class="badge @CssClass">@Label</span>
+
+@code {
+    [Parameter, EditorRequired] public ImportBatchStatus Status { get; set; }
+
+    private string CssClass => Status switch
+    {
+        ImportBatchStatus.Completed => "badge-outline-success",
+        ImportBatchStatus.CompletedWithErrors => "badge-outline-warning",
+        ImportBatchStatus.Failed => "badge-outline-danger",
+        ImportBatchStatus.Processing => "badge-outline-info",
+        _ => "badge-outline-secondary"
+    };
+
+    private string Label => Status switch
+    {
+        ImportBatchStatus.CompletedWithErrors => "Completed with errors",
+        _ => Status.ToString()
+    };
+}

@@ -1,0 +1,62 @@
+@inherits LayoutComponentBase
+
+@* Corona layout. The sidebar-icon-only class is normally put on <body> by Corona's JS; its CSS uses
+   descendant selectors, so putting it on .container-scroller works the same without any JavaScript. *@
+<div class="container-scroller @(_sidebarCollapsed ? "sidebar-icon-only" : null)">
+
+    <NavMenu MobileOpen="_mobileSidebarOpen" OnNavigate="CloseMobileSidebar" />
+
+    <div class="container-fluid page-body-wrapper">
+
+        <nav class="navbar p-0 fixed-top d-flex flex-row">
+            <div class="navbar-brand-wrapper d-flex d-lg-none align-items-center justify-content-center">
+                <a class="navbar-brand brand-logo-mini ct-brand-mini" href="">CT</a>
+            </div>
+            <div class="navbar-menu-wrapper flex-grow d-flex align-items-stretch">
+                <button class="navbar-toggler align-self-center d-none d-lg-block" type="button"
+                        title="Collapse sidebar" @onclick="ToggleSidebar">
+                    <span class="mdi mdi-menu"></span>
+                </button>
+                <ul class="navbar-nav w-100">
+                    <li class="nav-item w-100 d-flex align-items-center">
+                        <span class="text-muted ms-3 d-none d-md-inline">eBay card inventory &amp; pricing</span>
+                    </li>
+                </ul>
+                <button class="navbar-toggler navbar-toggler-right d-lg-none align-self-center" type="button"
+                        title="Open menu" @onclick="ToggleMobileSidebar">
+                    <span class="mdi mdi-format-line-spacing"></span>
+                </button>
+            </div>
+        </nav>
+
+        <div class="main-panel">
+            <div class="content-wrapper">
+                @Body
+            </div>
+
+            <footer class="footer">
+                <div class="d-sm-flex justify-content-center justify-content-sm-between">
+                    <span class="text-muted d-block text-center text-sm-left d-sm-inline-block">CardTrader3000</span>
+                    <span class="text-muted float-none float-sm-right d-block mt-1 mt-sm-0 text-center">
+                        Theme: Corona by BootstrapDash (MIT)
+                    </span>
+                </div>
+            </footer>
+        </div>
+    </div>
+</div>
+
+<div id="blazor-error-ui" data-nosnippet>
+    An unhandled error has occurred.
+    <a href="." class="reload">Reload</a>
+    <span class="dismiss">🗙</span>
+</div>
+
+@code {
+    private bool _sidebarCollapsed;
+    private bool _mobileSidebarOpen;
+
+    private void ToggleSidebar() => _sidebarCollapsed = !_sidebarCollapsed;
+    private void ToggleMobileSidebar() => _mobileSidebarOpen = !_mobileSidebarOpen;
+    private void CloseMobileSidebar() => _mobileSidebarOpen = false;
+}

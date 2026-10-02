@@ -1,0 +1,155 @@
+@page "/history"
+@using CardTrader3000.Services.Import
+@implements IDisposable
+@inject ImportHistoryService Batches
+@inject ImportProgressTracker Tracker
+@inject NavigationManager Nav
+
+<PageTitle>History · CardTrader3000</PageTitle>
+
+<div class="page-header">
+    <h3 class="page-title">Import history</h3>
+    <a class="btn btn-success" href="import"><i class="mdi mdi-plus me-1"></i>New import</a>
+</div>
+
+<div class="row">
+    <div class="col-12 grid-margin">
+        <div class="card">
+            <div class="card-body">
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                    <h4 class="card-title mb-0">Batches</h4>
+                    <select class="form-select form-select-sm w-auto" @bind="_status" @bind:after="ReloadFromFirstPageAsync">
+                        <option value="">All statuses</option>
+                        <option value="@ImportBatchStatus.Completed">Completed</option>
+                        <option value="@ImportBatchStatus.CompletedWithErrors">Completed with errors</option>
+                        <option value="@ImportBatchStatus.Failed">Failed</option>
+                        <option value="@ImportBatchStatus.Processing">Processing</option>
+                        <option value="@ImportBatchStatus.Pending">Pending</option>
+                    </select>
+                </div>
+
+                @if (_page is null)
+                {
+                    <p class="text-muted">Loading…</p>
+                }
+                else if (_page.TotalCount == 0)
+                {
+                    <p class="text-muted my-4 text-center">No imports yet. <a href="import">Start one</a>.</p>
+                }
+                else
+                {
+                    <div class="table-responsive">
+                        <table class="table table-hover ct-clickable-rows">
+                            <thead>
+                                <tr>
+                                    <th>#</th>
+                                    <th>Date</th>
+                                    <th>Source</th>
+                                    <th>Status</th>
+                                    <th class="text-end">Priced</th>
+                                    <th class="text-end">New / merged / failed</th>
+                                    <th class="text-end">Gross</th>
+                                    <th class="text-end">Net</th>
+                                    <th class="text-end">Margin</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var b in _page.Items)
+                                {
+                                    var live = Tracker.Get(b.Id);
+                                    <tr @onclick="() => Open(b.Id)">
+                                        <td>@b.Id</td>
+                                        <td>@b.CreatedUtc.ToLocalTime().ToString("g")</td>
+                                        <td>
+                                            @if (b.Source == ImportSource.Csv)
+                                            {
+                                                <i class="mdi mdi-file-delimited-outline text-muted me-1"></i>@(b.SourceFileName ?? "CSV")
+                                            }
+                                            else if (b.Source == ImportSource.Reprice)
+                                            {
+                                                <i class="mdi mdi-refresh text-muted me-1"></i><text>Re-price</text>
+                                            }
+                                            else
+                                            {
+                                                <i class="mdi mdi-keyboard-outline text-muted me-1"></i><text>Manual entry</text>
+                                            }
+                                        </td>
+                                        <td>
+                                            <StatusBadge Status="@(live?.Status ?? b.Status)" />
+                                            @if (live is { IsFinished: false })
+                                            {
+                                                <small class="text-muted ms-1">@live.Percent%</small>
+                                            }
+                                        </td>
+                                        <td class="text-end">
+                                            @b.TotalCardsEvaluated
+                                            @if (b.UnpricedCardCount > 0)
+                                            {
+                                                <div class="text-muted small">+@b.UnpricedCardCount track only</div>
+                                            }
+                                        </td>
+                                        <td class="text-end">
+                                            @b.NewCardCount / @b.MergedCardCount /
+                                            <span class="@(b.FailedCardCount > 0 ? "text-danger" : "")">@b.FailedCardCount</span>
+                                        </td>
+                                        <td class="text-end">@b.TotalGrossRevenue.ToString("C")</td>
+                                        <td class="text-end text-success">@b.TotalMaxNetReturn.ToString("C")</td>
+                                        <td class="text-end">@b.OverallNetMarginPercent.ToString("0.0")%</td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <div class="d-flex justify-content-between align-items-center mt-3">
+                        <small class="text-muted">@_page.TotalCount.ToString("N0") import(s)</small>
+                        <Pager Page="_page.Page" PageCount="_page.PageCount" PageChanged="GoToPageAsync" />
+                    </div>
+                }
+            </div>
+        </div>
+    </div>
+</div>
+
+@code {
+    private const int PageSize = 25;
+
+    private BatchPage? _page;
+    private ImportBatchStatus? _status;
+    private int _pageNumber = 1;
+
+    protected override async Task OnInitializedAsync()
+    {
+        Tracker.Changed += OnProgress;
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        _page = await Batches.ListAsync(_pageNumber, PageSize, _status);
+        _pageNumber = _page.Page;
+    }
+
+    private Task ReloadFromFirstPageAsync()
+    {
+        _pageNumber = 1;
+        return LoadAsync();
+    }
+
+    private async Task GoToPageAsync(int page)
+    {
+        _pageNumber = page;
+        await LoadAsync();
+    }
+
+    private void Open(int id) => Nav.NavigateTo($"history/{id}");
+
+    /// <summary>Live percent while a batch runs; reload the row's figures when it finishes.</summary>
+    private void OnProgress(ImportProgress p) => _ = InvokeAsync(async () =>
+    {
+        if (p.IsFinished) await LoadAsync();
+        StateHasChanged();
+    });
+
+    public void Dispose() => Tracker.Changed -= OnProgress;
+}

@@ -1,0 +1,20 @@
+@* Compact figure for batch summaries (six per row on large screens). *@
+<div class="col-xl-2 col-md-4 col-6 mb-3">
+    <div class="border border-secondary rounded p-3 h-100">
+        <small class="text-muted d-block mb-1">@Label</small>
+        <h4 class="mb-0 @(Tone is null ? "" : $"text-{Tone}")">@Value</h4>
+        @if (Note is not null)
+        {
+            <small class="text-muted">@Note</small>
+        }
+    </div>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public string Label { get; set; } = "";
+    [Parameter, EditorRequired] public string Value { get; set; } = "";
+    [Parameter] public string? Note { get; set; }
+
+    /// <summary>Optional Bootstrap text color: success, warning, danger, info.</summary>
+    [Parameter] public string? Tone { get; set; }
+}

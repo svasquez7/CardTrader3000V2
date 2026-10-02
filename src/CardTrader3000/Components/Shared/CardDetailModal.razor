@@ -1,0 +1,380 @@
+@using CardTrader3000.Services.Inventory
+@using CardTrader3000.Services.Import
+@implements IDisposable
+@inject InventoryService Inventory
+@inject ImportService Imports
+@inject ImportProgressTracker Tracker
+
+@* Rendered by Blazor (no Bootstrap JS): visible whenever CardId has a value. *@
+@if (CardId is not null)
+{
+    <div class="modal fade show d-block ct-modal" tabindex="-1" role="dialog" aria-modal="true" @onclick="CloseAsync">
+        <div class="modal-dialog modal-xl modal-dialog-scrollable" role="document" @onclick:stopPropagation="true">
+            <div class="modal-content">
+                @if (_card is null)
+                {
+                    <div class="modal-body text-muted">@(_notFound ? "This card no longer exists." : "Loading…")</div>
+                    <div class="modal-footer"><button class="btn btn-secondary" @onclick="CloseAsync">Close</button></div>
+                }
+                else
+                {
+                    <div class="modal-header">
+                        <div>
+                            <h4 class="modal-title mb-1">
+                                @_card.PlayerName
+                                @if (_card.IsRookie) { <span class="badge badge-outline-success ms-1">RC</span> }
+                            </h4>
+                            <div class="text-muted">
+                                @_card.CardSet #@_card.CardNumber · @_card.Parallel @(string.IsNullOrEmpty(_card.Team) ? "" : $"· {_card.Team}")
+                            </div>
+                        </div>
+                        <div class="d-flex align-items-center gap-2">
+                            @if (_repriceBatchId is not null)
+                            {
+                                <span class="text-info small"><i class="mdi mdi-loading mdi-spin me-1"></i>Pricing with Claude…</span>
+                            }
+                            else if (_confirmReprice)
+                            {
+                                <span class="text-warning small">Replace pricing and listing text?</span>
+                                <button class="btn btn-sm btn-warning" @onclick="RepriceAsync" disabled="@_busy">Yes</button>
+                                <button class="btn btn-sm btn-outline-secondary" @onclick="() => _confirmReprice = false">No</button>
+                            }
+                            else
+                            {
+                                <button class="btn btn-sm @(_card.IsPriced ? "btn-outline-warning" : "btn-warning")" disabled="@_busy"
+                                        @onclick="OnRepriceClicked"
+                                        title="Send this card back through Claude for fresh pricing and listing text">
+                                    <i class="mdi mdi-robot-outline me-1"></i>@(_card.IsPriced ? "Re-price" : "Price with Claude")
+                                </button>
+                            }
+                            <button type="button" class="btn-close btn-close-white ms-2" aria-label="Close" @onclick="CloseAsync"></button>
+                        </div>
+                    </div>
+
+                    <div class="modal-body">
+                        <div class="row">
+                            @* ---------- Left: pricing + stock ---------- *@
+                            <div class="col-lg-5">
+                                <h5 class="mb-3">Pricing</h5>
+                                @if (!_card.IsPriced)
+                                {
+                                    <div class="alert alert-secondary mb-3">
+                                        <i class="mdi mdi-tag-off-outline me-1"></i>
+                                        Not priced. This card was added as track only, so Claude hasn't evaluated it.
+                                        Use <strong>Price with Claude</strong> above if you want a price and listing text.
+                                    </div>
+                                }
+                                else
+                                {
+                                    <table class="table table-sm mb-3">
+                                        <tbody>
+                                            <tr><td class="text-muted">Est. list price</td><td class="text-end"><strong>@_card.EstimatedListPrice.ToString("C")</strong></td></tr>
+                                            <tr><td class="text-muted">eBay fee (FVF + fixed)</td><td class="text-end">−@_card.EbayFee.ToString("C")</td></tr>
+                                            <tr><td class="text-muted">Postage (Standard Envelope)</td><td class="text-end">−@_card.PostageCost.ToString("C")</td></tr>
+                                            <tr><td class="text-muted">Max net return</td><td class="text-end text-success"><strong>@_card.MaxNetReturn.ToString("C")</strong></td></tr>
+                                            <tr><td class="text-muted">Net margin</td><td class="text-end">@_card.NetMarginPercent.ToString("0.0")%</td></tr>
+                                            <tr><td class="text-muted">Bucket</td><td class="text-end"><BucketBadge Bucket="_card.Bucket" /></td></tr>
+                                            <tr><td class="text-muted">SGC candidate</td><td class="text-end"><SgcBadge Sgc="_card.SgcCandidate" /></td></tr>
+                                            <tr><td class="text-muted">Last priced</td><td class="text-end">@_card.LastPricedUtc?.ToLocalTime().ToString("g")</td></tr>
+                                        </tbody>
+                                    </table>
+
+                                    @if (!string.IsNullOrWhiteSpace(_card.SalesStrategy))
+                                    {
+                                        <h6 class="text-muted">Sales strategy</h6>
+                                        <p>@_card.SalesStrategy</p>
+                                    }
+                                }
+
+                                <h5 class="mt-4 mb-3">Stock</h5>
+                                <div class="row g-2 align-items-end">
+                                    <div class="col-4">
+                                        <label class="form-label small text-muted">Quantity</label>
+                                        <input type="number" min="0" class="form-control text-white" @bind="_quantity" />
+                                    </div>
+                                    <div class="col-5">
+                                        <label class="form-label small text-muted">Status</label>
+                                        <select class="form-select text-white" @bind="_status">
+                                            <option value="@InventoryStatus.InStock">In stock</option>
+                                            <option value="@InventoryStatus.Listed">Listed</option>
+                                            <option value="@InventoryStatus.Sold">Sold</option>
+                                        </select>
+                                    </div>
+                                    <div class="col-3">
+                                        <button class="btn btn-primary w-100" @onclick="SaveStockAsync" disabled="@_busy">Save</button>
+                                    </div>
+                                </div>
+                                <small class="text-muted">Setting quantity to 0 marks the card Sold.</small>
+                            </div>
+
+                            @* ---------- Right: eBay listing ---------- *@
+                            <div class="col-lg-7 mt-4 mt-lg-0">
+                                <h5 class="mb-3">eBay listing</h5>
+
+                                <div class="d-flex justify-content-between align-items-center mb-1">
+                                    <label class="form-label small text-muted mb-0">
+                                        Title <span class="@(_title.Length > 80 ? "text-danger" : "")">(@_title.Length/80)</span>
+                                    </label>
+                                    <CopyButton Text="@_title" Label="Copy title" />
+                                </div>
+                                <input class="form-control text-white mb-3" maxlength="80" @bind="_title" @bind:event="oninput" />
+
+                                <div class="d-flex justify-content-between align-items-center mb-1">
+                                    <label class="form-label small text-muted mb-0">Description</label>
+                                    <CopyButton Text="@_description" Label="Copy description" />
+                                </div>
+                                <textarea class="form-control text-white mb-2" rows="11" @bind="_description" @bind:event="oninput"></textarea>
+
+                                <div class="d-flex justify-content-between align-items-center">
+                                    <small class="text-muted">
+                                        Trading Card Singles · Ungraded NM or better · Buy It Now · Free Shipping (Standard Envelope)
+                                    </small>
+                                    <button class="btn btn-sm btn-outline-primary" @onclick="SaveListingAsync"
+                                            disabled="@(_busy || !ListingChanged)">
+                                        Save listing text
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+
+                        @* ---------- Import history ---------- *@
+                        <h5 class="mt-4 mb-2">Import history</h5>
+                        @if (_card.ImportItems.Count == 0)
+                        {
+                            <p class="text-muted">No import records.</p>
+                        }
+                        else
+                        {
+                            <div class="table-responsive">
+                                <table class="table table-sm">
+                                    <thead><tr><th>Import</th><th>Date</th><th class="text-end">Qty added</th><th class="text-end">Priced at</th><th class="text-end">Net</th><th>Result</th></tr></thead>
+                                    <tbody>
+                                        @foreach (var item in _card.ImportItems)
+                                        {
+                                            <tr>
+                                                <td><a href="history/@item.ImportBatchId">#@item.ImportBatchId</a></td>
+                                                <td>@item.ImportBatch.CreatedUtc.ToLocalTime().ToString("g")</td>
+                                                <td class="text-end">@(item.QuantityAdded > 0 ? $"+{item.QuantityAdded}" : "–")</td>
+                                                <td class="text-end">@item.EstimatedListPrice?.ToString("C")</td>
+                                                <td class="text-end">@item.MaxNetReturn?.ToString("C")</td>
+                                                <td>
+                                                    @if (item.Status == ImportItemStatus.Failed)
+                                                    {
+                                                        <span class="text-danger" title="@item.ErrorMessage">Failed</span>
+                                                    }
+                                                    else if (item.Status == ImportItemStatus.Pending)
+                                                    {
+                                                        <span class="text-muted">Pending</span>
+                                                    }
+                                                    else if (item.QuantityAdded == 0)
+                                                    {
+                                                        <text>Re-priced</text>
+                                                    }
+                                                    else
+                                                    {
+                                                        <text>@(item.CreatedNewCard ? "New" : "Merged")</text>
+                                                        @if (item.SkipPricing) { <span class="text-muted small"> · track only</span> }
+                                                    }
+                                                </td>
+                                            </tr>
+                                        }
+                                    </tbody>
+                                </table>
+                            </div>
+                        }
+
+                        @if (_message is not null)
+                        {
+                            <div class="alert @(_messageIsError ? "alert-danger" : "alert-success") py-2 mt-3 mb-0">@_message</div>
+                        }
+                    </div>
+
+                    <div class="modal-footer justify-content-between">
+                        @if (_confirmDelete)
+                        {
+                            <div>
+                                <span class="text-danger me-2">Delete this card from inventory?</span>
+                                <button class="btn btn-danger btn-sm" @onclick="DeleteAsync" disabled="@_busy">Yes, delete</button>
+                                <button class="btn btn-outline-secondary btn-sm" @onclick="() => _confirmDelete = false">Cancel</button>
+                            </div>
+                        }
+                        else
+                        {
+                            <button class="btn btn-outline-danger btn-sm" @onclick="() => _confirmDelete = true">
+                                <i class="mdi mdi-delete-outline me-1"></i>Delete
+                            </button>
+                        }
+                        <button class="btn btn-secondary" @onclick="CloseAsync">Close</button>
+                    </div>
+                }
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter] public int? CardId { get; set; }
+    [Parameter] public EventCallback OnClose { get; set; }
+
+    /// <summary>Raised after a save or delete so the grid can reload.</summary>
+    [Parameter] public EventCallback OnChanged { get; set; }
+
+    private int? _loadedId;
+    private InventoryCard? _card;
+    private bool _notFound;
+    private bool _busy;
+    private bool _confirmDelete;
+    private bool _confirmReprice;
+    private int? _repriceBatchId;
+    private string? _message;
+    private bool _messageIsError;
+
+    private int _quantity;
+    private InventoryStatus _status;
+    private string _title = "";
+    private string _description = "";
+
+    private bool ListingChanged =>
+        _card is not null && (_title != (_card.EbayTitle ?? "") || _description != (_card.EbayDescription ?? ""));
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (CardId == _loadedId) return;
+        _loadedId = CardId;
+        _card = null;
+        _notFound = false;
+        _confirmDelete = false;
+        _confirmReprice = false;
+        _repriceBatchId = null;
+        _message = null;
+
+        if (CardId is null) return;
+        await LoadAsync(CardId.Value);
+
+        // Already being re-priced (e.g. from the grid)? Show it as in progress.
+        var pending = await Imports.GetPendingRepricesAsync();
+        foreach (var (batchId, cardIds) in pending)
+        {
+            if (cardIds.Contains(CardId.Value))
+            {
+                _repriceBatchId = batchId;
+                break;
+            }
+        }
+    }
+
+    protected override void OnInitialized() => Tracker.Changed += OnProgress;
+
+    /// <summary>First-time pricing needs no confirmation; re-pricing replaces text you may have edited, so it asks.</summary>
+    private async Task OnRepriceClicked()
+    {
+        if (_card is null) return;
+        if (_card.IsPriced) _confirmReprice = true;
+        else await RepriceAsync();
+    }
+
+    private async Task RepriceAsync()
+    {
+        if (_card is null) return;
+        _confirmReprice = false;
+        _message = null;
+        _busy = true;
+        try
+        {
+            _repriceBatchId = await Imports.RepriceAsync([_card.Id]);
+            if (_repriceBatchId is null) ShowMessage("This card no longer exists.", error: true);
+            await OnChanged.InvokeAsync(); // lets the grid show the row as busy
+        }
+        catch (Exception ex)
+        {
+            ShowMessage(ex.Message, error: true);
+        }
+        finally { _busy = false; }
+    }
+
+    private void OnProgress(ImportProgress p)
+    {
+        if (p.BatchId != _repriceBatchId || !p.IsFinished) return;
+
+        _ = InvokeAsync(async () =>
+        {
+            _repriceBatchId = null;
+            if (_card is not null)
+            {
+                await LoadAsync(_card.Id);
+                var latest = _card?.ImportItems.FirstOrDefault(i => i.ImportBatchId == p.BatchId);
+                if (latest?.Status == ImportItemStatus.Failed)
+                    ShowMessage($"Re-price failed: {latest.ErrorMessage}", error: true);
+                else
+                    ShowMessage("Pricing and listing text updated.");
+            }
+            await OnChanged.InvokeAsync();
+            StateHasChanged();
+        });
+    }
+
+    public void Dispose() => Tracker.Changed -= OnProgress;
+
+    private async Task LoadAsync(int id)
+    {
+        _card = await Inventory.GetAsync(id);
+        _notFound = _card is null;
+        if (_card is null) return;
+
+        _quantity = _card.Quantity;
+        _status = _card.Status;
+        _title = _card.EbayTitle ?? "";
+        _description = _card.EbayDescription ?? "";
+    }
+
+    private async Task SaveStockAsync()
+    {
+        if (_card is null) return;
+        if (_quantity < 0) { ShowMessage("Quantity cannot be negative.", error: true); return; }
+
+        _busy = true;
+        try
+        {
+            await Inventory.UpdateStockAsync(_card.Id, _quantity, _status);
+            await LoadAsync(_card.Id);
+            ShowMessage("Stock saved.");
+            await OnChanged.InvokeAsync();
+        }
+        finally { _busy = false; }
+    }
+
+    private async Task SaveListingAsync()
+    {
+        if (_card is null) return;
+        _busy = true;
+        try
+        {
+            await Inventory.UpdateListingAsync(_card.Id, _title, _description);
+            await LoadAsync(_card.Id);
+            ShowMessage("Listing text saved. Note: re-importing this card will replace it with fresh text from Claude.");
+            await OnChanged.InvokeAsync();
+        }
+        finally { _busy = false; }
+    }
+
+    private async Task DeleteAsync()
+    {
+        if (_card is null) return;
+        _busy = true;
+        try
+        {
+            await Inventory.DeleteAsync(_card.Id);
+            await OnChanged.InvokeAsync();
+            await CloseAsync();
+        }
+        finally { _busy = false; }
+    }
+
+    private Task CloseAsync() => OnClose.InvokeAsync();
+
+    private void ShowMessage(string text, bool error = false)
+    {
+        _message = text;
+        _messageIsError = error;
+    }
+}

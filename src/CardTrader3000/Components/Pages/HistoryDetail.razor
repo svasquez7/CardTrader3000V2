@@ -1,0 +1,313 @@
+@page "/history/{BatchId:int}"
+@using System.Text.Json
+@using CardTrader3000.Services.Import
+@implements IDisposable
+@inject ImportHistoryService Batches
+@inject ImportService Imports
+@inject ImportProgressTracker Tracker
+
+<PageTitle>Import #@BatchId · CardTrader3000</PageTitle>
+
+<div class="page-header">
+    <h3 class="page-title">
+        <a href="history" class="text-muted me-2"><i class="mdi mdi-arrow-left"></i></a>
+        Import #@BatchId
+    </h3>
+    @if (_batch is not null)
+    {
+        <StatusBadge Status="@(_live?.Status ?? _batch.Status)" />
+    }
+</div>
+
+@if (_batch is null)
+{
+    <div class="card"><div class="card-body text-muted">@(_loaded ? "Import not found." : "Loading…")</div></div>
+    return;
+}
+
+@* ---------- Live progress ---------- *@
+@if (_live is { IsFinished: false })
+{
+    <div class="card grid-margin">
+        <div class="card-body">
+            <p class="text-muted mb-2">@_live.Message</p>
+            <div class="progress progress-lg">
+                <div class="progress-bar bg-success progress-bar-striped progress-bar-animated" style="width: @(Math.Max(_live.Percent, 3))%">@_live.Percent%</div>
+            </div>
+        </div>
+    </div>
+}
+
+@* ---------- Summary ---------- *@
+<div class="card grid-margin">
+    <div class="card-body">
+        <div class="d-flex flex-wrap gap-4 text-muted small mb-3">
+            <span>
+                @if (_batch.Source == ImportSource.Csv)
+                {
+                    <i class="mdi mdi-file-delimited-outline me-1"></i>@(_batch.SourceFileName ?? "CSV upload")
+                }
+                else if (_batch.Source == ImportSource.Reprice)
+                {
+                    <i class="mdi mdi-refresh me-1"></i><text>Re-price from inventory (stock unchanged)</text>
+                }
+                else
+                {
+                    <i class="mdi mdi-keyboard-outline me-1"></i><text>Manual entry</text>
+                }
+            </span>
+            <span><i class="mdi mdi-calendar me-1"></i>@_batch.CreatedUtc.ToLocalTime().ToString("g")</span>
+            @if (Duration is { } d)
+            {
+                <span><i class="mdi mdi-timer-outline me-1"></i>@FormatDuration(d)</span>
+            }
+            <span><i class="mdi mdi-robot-outline me-1"></i>@_batch.Model</span>
+            <span>@_batch.InputTokens.ToString("N0") in / @_batch.OutputTokens.ToString("N0") out tokens · @_batch.ChunkCount request(s)</span>
+            <span>@_batch.TotalInputLines line(s) submitted</span>
+        </div>
+
+        <div class="row">
+            <SummaryTile Label="Cards priced" Value="@_batch.TotalCardsEvaluated.ToString("N0")"
+                         Note="@(_batch.UnpricedCardCount > 0 ? $"+ {_batch.UnpricedCardCount} track only (no AI cost)" : null)" />
+            <SummaryTile Label="New / merged" Value="@($"{_batch.NewCardCount} / {_batch.MergedCardCount}")" />
+            <SummaryTile Label="Bucket 1 / 2" Value="@($"{_batch.Bucket1Count} / {_batch.Bucket2Count}")" />
+            <SummaryTile Label="Gross revenue" Value="@_batch.TotalGrossRevenue.ToString("C")" />
+            <SummaryTile Label="eBay fees + postage" Value="@((_batch.TotalEbayFees + _batch.TotalPostage).ToString("C"))"
+                         Note="@($"{_batch.TotalEbayFees:C} fees · {_batch.TotalPostage:C} postage")" />
+            <SummaryTile Label="Max net return" Value="@_batch.TotalMaxNetReturn.ToString("C")"
+                         Note="@($"{_batch.OverallNetMarginPercent:0.0}% margin")" Tone="success" />
+        </div>
+
+        <small class="text-muted">
+            Fee rates used: @((_batch.FinalValueFeeRate * 100).ToString("0.##"))% final value fee ·
+            @_batch.FixedOrderFee.ToString("C") per order · @_batch.StandardEnvelopeRate.ToString("C") envelope
+        </small>
+
+        @if (!string.IsNullOrWhiteSpace(_batch.ErrorMessage))
+        {
+            <pre class="alert alert-warning small mt-3 mb-0" style="white-space: pre-wrap">@_batch.ErrorMessage</pre>
+        }
+    </div>
+</div>
+
+@* ---------- Items ---------- *@
+<div class="card grid-margin">
+    <div class="card-body">
+        <div class="d-flex flex-wrap justify-content-between align-items-center mb-3 gap-2">
+            <div class="btn-group" role="group">
+                <button class="btn btn-sm @(_filter is null && !_trackOnlyFilter ? "btn-primary" : "btn-outline-secondary")" @onclick="() => FilterAsync(null)">
+                    All (@_counts.All)
+                </button>
+                <button class="btn btn-sm @(_filter == ImportItemStatus.Succeeded && !_trackOnlyFilter ? "btn-primary" : "btn-outline-secondary")" @onclick="() => FilterAsync(ImportItemStatus.Succeeded)">
+                    Succeeded (@_counts.Succeeded)
+                </button>
+                <button class="btn btn-sm @(_filter == ImportItemStatus.Failed ? "btn-primary" : "btn-outline-secondary")" @onclick="() => FilterAsync(ImportItemStatus.Failed)">
+                    Failed (@_counts.Failed)
+                </button>
+                @if (_counts.TrackOnly > 0)
+                {
+                    <button class="btn btn-sm @(_trackOnlyFilter ? "btn-primary" : "btn-outline-secondary")" @onclick="FilterTrackOnlyAsync">
+                        Track only (@_counts.TrackOnly)
+                    </button>
+                }
+            </div>
+            @if (_counts.Failed > 0 && _live is not { IsFinished: false })
+            {
+                <button class="btn btn-sm btn-outline-warning" @onclick="RetryAsync" disabled="@_retrying">
+                    <i class="mdi mdi-refresh me-1"></i>Retry @_counts.Failed failed card(s)
+                </button>
+            }
+        </div>
+
+        <div class="table-responsive">
+            <table class="table table-sm">
+                <thead>
+                    <tr>
+                        <th>Line</th>
+                        <th>Card</th>
+                        <th class="text-end">Qty</th>
+                        <th>Result</th>
+                        <th class="text-end">List</th>
+                        <th class="text-end">Net</th>
+                        <th>Bucket</th>
+                        <th>SGC</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var i in _items)
+                    {
+                        <tr>
+                            <td class="text-muted">@i.LineNumber</td>
+                            <td>
+                                @i.PlayerName
+                                <div class="text-muted small">@i.CardSet #@i.CardNumber · @i.Parallel</div>
+                            </td>
+                            <td class="text-end">@i.QuantityAdded</td>
+                            @switch (i.Status)
+                            {
+                                case ImportItemStatus.Succeeded:
+                                    <td>
+                                        @if (i.QuantityAdded == 0)
+                                        {
+                                            <span class="badge badge-outline-warning">Re-priced</span>
+                                        }
+                                        else
+                                        {
+                                            <span class="badge @(i.CreatedNewCard ? "badge-outline-success" : "badge-outline-info")">@(i.CreatedNewCard ? "New" : "Merged")</span>
+                                        }
+                                    </td>
+                                    @if (i.SkipPricing)
+                                    {
+                                        <td colspan="4" class="text-muted small"><i class="mdi mdi-tag-off-outline me-1"></i>Track only, not priced</td>
+                                    }
+                                    else
+                                    {
+                                        <td class="text-end">@i.EstimatedListPrice?.ToString("C")</td>
+                                        <td class="text-end">@i.MaxNetReturn?.ToString("C")</td>
+                                        <td>@if (i.Bucket is { } b) { <BucketBadge Bucket="b" /> }</td>
+                                        <td>@if (i.SgcCandidate is { } s) { <SgcBadge Sgc="s" /> }</td>
+                                    }
+                                    <td class="text-end">
+                                        @if (i.InventoryCardId is { } cardId)
+                                        {
+                                            <a class="btn btn-sm btn-outline-primary" href="inventory?card=@cardId">Open</a>
+                                        }
+                                        else
+                                        {
+                                            <small class="text-muted" title="This card was deleted from inventory">deleted</small>
+                                        }
+                                    </td>
+                                    break;
+
+                                case ImportItemStatus.Failed:
+                                    <td><span class="badge badge-outline-danger">Failed</span></td>
+                                    <td colspan="5" class="text-danger small">@i.ErrorMessage</td>
+                                    break;
+
+                                default:
+                                    <td><span class="badge badge-outline-secondary">Pending</span></td>
+                                    <td colspan="5"></td>
+                                    break;
+                            }
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+@* ---------- Raw responses (debugging) ---------- *@
+@if (!string.IsNullOrWhiteSpace(_batch.RawResponseJson))
+{
+    <div class="card grid-margin">
+        <div class="card-body">
+            <details>
+                <summary class="text-muted">Raw Claude responses (@FormatBytes(_batch.RawResponseJson.Length))</summary>
+                <pre class="mt-3 small text-muted" style="max-height: 500px; overflow: auto; white-space: pre-wrap">@PrettyRaw</pre>
+            </details>
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter] public int BatchId { get; set; }
+
+    private ImportBatch? _batch;
+    private bool _loaded;
+    private ImportProgress? _live;
+    private List<ImportBatchItem> _items = [];
+    private ImportItemStatus? _filter;
+    private (int All, int Succeeded, int Failed, int TrackOnly) _counts;
+    private bool _trackOnlyFilter;
+    private bool _retrying;
+
+    private TimeSpan? Duration =>
+        _batch?.StartedUtc is { } start && _batch.CompletedUtc is { } end ? end - start : null;
+
+    private string PrettyRaw
+    {
+        get
+        {
+            try
+            {
+                using var doc = JsonDocument.Parse(_batch!.RawResponseJson!);
+                return JsonSerializer.Serialize(doc.RootElement, new JsonSerializerOptions { WriteIndented = true });
+            }
+            catch (JsonException) { return _batch!.RawResponseJson!; }
+        }
+    }
+
+    protected override void OnInitialized() => Tracker.Changed += OnProgress;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        _filter = null;
+        _trackOnlyFilter = false;
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        _batch = await Batches.GetAsync(BatchId);
+        _loaded = true;
+        _live = Tracker.Get(BatchId);
+        if (_batch is null) return;
+
+        var all = await Batches.GetItemsAsync(BatchId);
+        _counts = (all.Count,
+                   all.Count(i => i.Status == ImportItemStatus.Succeeded),
+                   all.Count(i => i.Status == ImportItemStatus.Failed),
+                   all.Count(i => i.SkipPricing));
+        _items = _trackOnlyFilter ? all.Where(i => i.SkipPricing).ToList()
+               : _filter is null ? all
+               : all.Where(i => i.Status == _filter).ToList();
+    }
+
+    private async Task FilterTrackOnlyAsync()
+    {
+        _filter = null;
+        _trackOnlyFilter = true;
+        await LoadAsync();
+    }
+
+    private async Task FilterAsync(ImportItemStatus? status)
+    {
+        _trackOnlyFilter = false;
+        _filter = status;
+        await LoadAsync();
+    }
+
+    private async Task RetryAsync()
+    {
+        _retrying = true;
+        try
+        {
+            await Imports.RetryFailedAsync(BatchId);
+            _filter = null;
+            await LoadAsync();
+        }
+        finally { _retrying = false; }
+    }
+
+    private void OnProgress(ImportProgress p)
+    {
+        if (p.BatchId != BatchId) return;
+        _ = InvokeAsync(async () =>
+        {
+            _live = p;
+            // Refresh rows as each chunk is saved so results appear while it runs.
+            await LoadAsync();
+            StateHasChanged();
+        });
+    }
+
+    private static string FormatDuration(TimeSpan d) =>
+        d.TotalMinutes >= 1 ? $"{(int)d.TotalMinutes}m {d.Seconds}s" : $"{d.TotalSeconds:0.0}s";
+
+    private static string FormatBytes(int chars) =>
+        chars >= 1024 * 1024 ? $"{chars / 1024d / 1024d:0.0} MB" : $"{Math.Max(1, chars / 1024)} KB";
+
+    public void Dispose() => Tracker.Changed -= OnProgress;
+}

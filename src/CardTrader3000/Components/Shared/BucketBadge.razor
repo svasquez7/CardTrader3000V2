@@ -1,0 +1,8 @@
+<span class="badge @(Bucket == PriceBucket.Bucket1 ? "badge-outline-success" : "badge-outline-secondary")"
+      title="@(Bucket == PriceBucket.Bucket1 ? "Bucket 1 ($2.99+)" : "Bucket 2 (Rest)")">
+    @(Bucket == PriceBucket.Bucket1 ? "B1" : "B2")
+</span>
+
+@code {
+    [Parameter, EditorRequired] public PriceBucket Bucket { get; set; }
+}

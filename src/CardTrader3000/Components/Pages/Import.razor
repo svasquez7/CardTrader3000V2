@@ -1,0 +1,403 @@
+@page "/import"
+@using CardTrader3000.Services.Import
+@implements IDisposable
+@inject ImportService Imports
+@inject ImportProgressTracker Tracker
+@inject IDbContextFactory<AppDbContext> DbFactory
+
+<PageTitle>Import · CardTrader3000</PageTitle>
+
+<div class="page-header">
+    <h3 class="page-title">Import</h3>
+</div>
+
+<div class="row">
+    @* ---------- Input ---------- *@
+    <div class="col-lg-6 grid-margin stretch-card">
+        <div class="card">
+            <div class="card-body">
+                <h4 class="card-title">Add cards</h4>
+                <p class="card-description text-muted">
+                    One card per line: <code>card set, player name, card number, parallel, price</code>.
+                    Parallel is optional (defaults to Base). Duplicate lines are combined into a quantity, and
+                    cards already in inventory have their quantity increased.
+                </p>
+                <p class="card-description text-muted">
+                    <strong>price</strong> is optional <code>true</code>/<code>false</code>. Use <code>false</code> for cards you
+                    want in inventory but don't want to pay to price: they skip Claude entirely. Lines without it use the setting below.
+                </p>
+
+                <div class="btn-group mb-3" role="group">
+                    <button type="button" class="btn @(_mode == Mode.Csv ? "btn-primary" : "btn-outline-secondary")"
+                            @onclick="() => SwitchMode(Mode.Csv)" disabled="@IsBusy">
+                        <i class="mdi mdi-file-delimited-outline me-1"></i>CSV file
+                    </button>
+                    <button type="button" class="btn @(_mode == Mode.Manual ? "btn-primary" : "btn-outline-secondary")"
+                            @onclick="() => SwitchMode(Mode.Manual)" disabled="@IsBusy">
+                        <i class="mdi mdi-keyboard-outline me-1"></i>Manual entry
+                    </button>
+                </div>
+
+                @if (_mode == Mode.Csv)
+                {
+                    <InputFile class="form-control mb-2" accept=".csv,.txt,text/csv" OnChange="OnFileSelectedAsync" disabled="@IsBusy" />
+                    <small class="text-muted d-block mb-3">Up to @(ImportService.MaxFileBytes / 1024 / 1024) MB and @CardLineParser.MaxLines.ToString("N0") lines. A header row is detected and skipped.</small>
+                }
+                else
+                {
+                    <textarea class="form-control mb-3 text-white" rows="9" disabled="@IsBusy"
+                              @bind="ManualText" @bind:event="oninput"
+                              placeholder="2013 Topps Football, Von Miller, 290, Base&#10;2010 Topps Football, Jimmy Graham, 265, Base, true&#10;1991 Fleer, Common Player, 112, Base, false&#10;&quot;2020 Panini Prizm, Silver&quot;, Joe Burrow, 307, Silver Prizm"></textarea>
+                }
+
+                <div class="form-check form-check-flat mb-3">
+                    <label class="form-check-label">
+                        <input type="checkbox" class="form-check-input" disabled="@IsBusy"
+                               @bind="_priceByDefault" @bind:after="RefreshPreview" />
+                        Price cards with Claude by default
+                    </label>
+                    <small class="text-muted d-block">@PriceDefaultHint</small>
+                </div>
+
+                @if (_submitError is not null)
+                {
+                    <div class="alert alert-danger">@_submitError</div>
+                }
+
+                <button class="btn btn-success btn-lg" @onclick="SubmitAsync" disabled="@(!CanSubmit)">
+                    <i class="mdi @(PricedCount > 0 ? "mdi-robot-outline" : "mdi-plus") me-1"></i>
+                    @SubmitLabel
+                </button>
+            </div>
+        </div>
+    </div>
+
+    @* ---------- Preview ---------- *@
+    <div class="col-lg-6 grid-margin stretch-card">
+        <div class="card">
+            <div class="card-body">
+                <h4 class="card-title">Preview</h4>
+
+                @if (_preview is null || (_preview.Lines.Count == 0 && _preview.Errors.Count == 0))
+                {
+                    <p class="text-muted">@(_mode == Mode.Csv ? "Choose a file to see what will be imported." : "Start typing to see what will be imported.")</p>
+                }
+                else
+                {
+                    var distinct = _preview.Distinct();
+                    <div class="d-flex flex-wrap gap-4 mb-3">
+                        <div><h4 class="mb-0">@_preview.Lines.Count</h4><small class="text-muted">valid lines</small></div>
+                        <div><h4 class="mb-0">@distinct.Count</h4><small class="text-muted">distinct cards</small></div>
+                        <div><h4 class="mb-0 text-success">@distinct.Count(d => d.Price)</h4><small class="text-muted">to price</small></div>
+                        <div><h4 class="mb-0">@distinct.Count(d => !d.Price)</h4><small class="text-muted">track only</small></div>
+                        <div><h4 class="mb-0 @(_preview.Errors.Count > 0 ? "text-warning" : "")">@_preview.Errors.Count</h4><small class="text-muted">skipped</small></div>
+                    </div>
+
+                    @if (_preview.Errors.Count > 0)
+                    {
+                        <div class="alert alert-warning py-2 small">
+                            @foreach (var e in _preview.Errors.Take(8))
+                            {
+                                <div>Line @e.LineNumber: @e.Message</div>
+                            }
+                            @if (_preview.Errors.Count > 8) { <div>…and @(_preview.Errors.Count - 8) more</div> }
+                        </div>
+                    }
+
+                    <div class="table-responsive">
+                        <table class="table table-sm">
+                            <thead>
+                                <tr><th>Set</th><th>Player</th><th>#</th><th>Parallel</th><th class="text-end">Qty</th><th>Price</th></tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var d in distinct.Take(PreviewRows))
+                                {
+                                    <tr>
+                                        <td>@d.First.CardSet</td>
+                                        <td>@d.First.PlayerName</td>
+                                        <td>@d.First.CardNumber</td>
+                                        <td>@d.First.Parallel</td>
+                                        <td class="text-end">@d.Quantity</td>
+                                        <td>
+                                            @if (d.Price)
+                                            {
+                                                <i class="mdi mdi-robot-outline text-success" title="Will be priced by Claude"></i>
+                                            }
+                                            else
+                                            {
+                                                <span class="text-muted small" title="Added to inventory only">track only</span>
+                                            }
+                                        </td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                    @if (distinct.Count > PreviewRows)
+                    {
+                        <small class="text-muted">Showing first @PreviewRows of @distinct.Count.</small>
+                    }
+                }
+            </div>
+        </div>
+    </div>
+</div>
+
+@* ---------- Active / last batch ---------- *@
+@if (_batchId is not null)
+{
+    <div class="row">
+        <div class="col-12 grid-margin">
+            <div class="card">
+                <div class="card-body">
+                    <h4 class="card-title d-flex justify-content-between align-items-center">
+                        <span>Import #@_batchId</span>
+                        <StatusBadge Status="@(_progress?.Status ?? _summary?.Status ?? ImportBatchStatus.Pending)" />
+                    </h4>
+
+                    @if (_progress is { IsFinished: false })
+                    {
+                        <p class="text-muted mb-2">@_progress.Message</p>
+                        <div class="progress progress-lg mb-2">
+                            <div class="progress-bar bg-success progress-bar-striped progress-bar-animated"
+                                 role="progressbar" style="width: @(Math.Max(_progress.Percent, 3))%">
+                                @_progress.Percent%
+                            </div>
+                        </div>
+                        <small class="text-muted">Runs in the background. You can leave this page; it keeps going.</small>
+                    }
+
+                    @if (_summary is not null && IsDone(_summary.Status))
+                    {
+                        <div class="row mt-2">
+                            <SummaryTile Label="Cards priced" Value="@_summary.TotalCardsEvaluated.ToString("N0")"
+                                         Note="@(_summary.UnpricedCardCount > 0 ? $"+ {_summary.UnpricedCardCount} track only" : null)" />
+                            <SummaryTile Label="New / merged" Value="@($"{_summary.NewCardCount} / {_summary.MergedCardCount}")" />
+                            <SummaryTile Label="Bucket 1 / 2" Value="@($"{_summary.Bucket1Count} / {_summary.Bucket2Count}")" />
+                            <SummaryTile Label="Gross revenue" Value="@_summary.TotalGrossRevenue.ToString("C")" />
+                            <SummaryTile Label="eBay fees + postage" Value="@((_summary.TotalEbayFees + _summary.TotalPostage).ToString("C"))" />
+                            <SummaryTile Label="Max net return" Value="@_summary.TotalMaxNetReturn.ToString("C")"
+                                         Note="@($"{_summary.OverallNetMarginPercent:0.0}% margin")" Tone="success" />
+                        </div>
+
+                        @if (!string.IsNullOrWhiteSpace(_summary.ErrorMessage))
+                        {
+                            <pre class="alert alert-warning small mb-3" style="white-space: pre-wrap">@_summary.ErrorMessage</pre>
+                        }
+
+                        @if (_failedItems.Count > 0)
+                        {
+                            <h5 class="text-danger mt-3">@_failedItems.Count card(s) failed</h5>
+                            <div class="table-responsive mb-3">
+                                <table class="table table-sm">
+                                    <tbody>
+                                        @foreach (var f in _failedItems)
+                                        {
+                                            <tr>
+                                                <td>@f.PlayerName <div class="text-muted small">@f.CardSet #@f.CardNumber · @f.Parallel</div></td>
+                                                <td class="text-danger small">@f.ErrorMessage</td>
+                                            </tr>
+                                        }
+                                    </tbody>
+                                </table>
+                            </div>
+                            <button class="btn btn-outline-warning" @onclick="RetryAsync" disabled="@IsBusy">
+                                <i class="mdi mdi-refresh me-1"></i>Retry failed cards
+                            </button>
+                        }
+
+                        <a class="btn btn-outline-info ms-2" href="history/@_batchId"><i class="mdi mdi-format-list-checks me-1"></i>Batch details</a>
+                        <a class="btn btn-outline-info ms-2" href="inventory"><i class="mdi mdi-cards-outline me-1"></i>View inventory</a>
+                    }
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private enum Mode { Csv, Manual }
+    private const int PreviewRows = 10;
+
+    private Mode _mode = Mode.Csv;
+    private string _manualText = "";
+    private string? _csvText;
+    private string? _csvFileName;
+    private ParseResult? _preview;
+    private string? _submitError;
+    private bool _submitting;
+
+    private int? _batchId;
+    private ImportProgress? _progress;
+    private ImportBatch? _summary;
+    private List<ImportBatchItem> _failedItems = [];
+
+    private bool IsBusy => _submitting || _progress is { IsFinished: false };
+    private bool _priceByDefault = true;
+
+    private string PriceDefaultHint => _priceByDefault
+        ? "Lines without a price column are priced. Add \", false\" to a line to skip it."
+        : "Lines without a price column are only added to inventory. Add \", true\" to a line to price it.";
+
+    private bool CanSubmit => !IsBusy && _preview is { Lines.Count: > 0 };
+
+    private int PricedCount => _preview?.Distinct().Count(d => d.Price) ?? 0;
+
+    private string SubmitLabel
+    {
+        get
+        {
+            if (_preview is null || _preview.Lines.Count == 0) return "Evaluate & add";
+            var distinct = _preview.Distinct();
+            var price = distinct.Count(d => d.Price);
+            var track = distinct.Count - price;
+            return (price, track) switch
+            {
+                (0, _) => $"Add {track} card(s) without pricing",
+                (_, 0) => $"Price & add {price} card(s)",
+                _ => $"Price {price} & add {track} without pricing"
+            };
+        }
+    }
+
+    private void RefreshPreview()
+    {
+        _preview = _mode == Mode.Csv
+            ? (_csvText is null ? null : Imports.Preview(_csvText, _priceByDefault))
+            : Imports.Preview(_manualText, _priceByDefault);
+    }
+
+    private string ManualText
+    {
+        get => _manualText;
+        set
+        {
+            _manualText = value;
+            _preview = Imports.Preview(value, _priceByDefault);
+            _submitError = null;
+        }
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        Tracker.Changed += OnProgressChanged;
+
+        // Coming back to the page while an import is still running: show it.
+        await using var db = await DbFactory.CreateDbContextAsync();
+        var running = await db.ImportBatches
+            .Where(b => b.Status == ImportBatchStatus.Pending || b.Status == ImportBatchStatus.Processing)
+            .OrderByDescending(b => b.Id)
+            .Select(b => (int?)b.Id)
+            .FirstOrDefaultAsync();
+
+        if (running is not null)
+        {
+            _batchId = running;
+            _progress = Tracker.Get(running.Value);
+            await LoadSummaryAsync();
+        }
+    }
+
+    private void SwitchMode(Mode mode)
+    {
+        _mode = mode;
+        _submitError = null;
+        RefreshPreview();
+    }
+
+    private async Task OnFileSelectedAsync(InputFileChangeEventArgs e)
+    {
+        _submitError = null;
+        try
+        {
+            await using var stream = e.File.OpenReadStream(ImportService.MaxFileBytes);
+            using var reader = new StreamReader(stream);
+            _csvText = await reader.ReadToEndAsync();
+            _csvFileName = e.File.Name;
+            _preview = Imports.Preview(_csvText, _priceByDefault);
+        }
+        catch (IOException)
+        {
+            _csvText = null;
+            _preview = null;
+            _submitError = $"File is larger than {ImportService.MaxFileBytes / 1024 / 1024} MB.";
+        }
+    }
+
+    private async Task SubmitAsync()
+    {
+        _submitError = null;
+        _submitting = true;
+        try
+        {
+            var result = _mode == Mode.Csv
+                ? await Imports.SubmitCsvAsync(_csvText ?? "", _csvFileName ?? "upload.csv", _priceByDefault)
+                : await Imports.SubmitManualAsync(_manualText, _priceByDefault);
+
+            if (!result.Accepted)
+            {
+                _submitError = "No valid card lines to import.";
+                return;
+            }
+
+            _batchId = result.BatchId;
+            _summary = null;
+            _failedItems = [];
+            _progress = Tracker.Get(result.BatchId!.Value);
+
+            // Clear the input so the same cards aren't submitted twice by accident.
+            _manualText = "";
+            _csvText = null;
+            _csvFileName = null;
+            _preview = null;
+        }
+        catch (Exception ex)
+        {
+            _submitError = ex.Message;
+        }
+        finally
+        {
+            _submitting = false;
+        }
+    }
+
+    private async Task RetryAsync()
+    {
+        if (_batchId is null) return;
+        if (await Imports.RetryFailedAsync(_batchId.Value))
+        {
+            _summary = null;
+            _failedItems = [];
+            _progress = Tracker.Get(_batchId.Value);
+        }
+    }
+
+    private void OnProgressChanged(ImportProgress p)
+    {
+        if (p.BatchId != _batchId) return;
+
+        _ = InvokeAsync(async () =>
+        {
+            _progress = p;
+            if (p.IsFinished) await LoadSummaryAsync();
+            StateHasChanged();
+        });
+    }
+
+    private async Task LoadSummaryAsync()
+    {
+        if (_batchId is null) return;
+
+        await using var db = await DbFactory.CreateDbContextAsync();
+        _summary = await db.ImportBatches.AsNoTracking().FirstOrDefaultAsync(b => b.Id == _batchId);
+        _failedItems = await db.ImportBatchItems.AsNoTracking()
+            .Where(i => i.ImportBatchId == _batchId && i.Status == ImportItemStatus.Failed)
+            .OrderBy(i => i.LineNumber)
+            .ToListAsync();
+    }
+
+    private static bool IsDone(ImportBatchStatus s) =>
+        s is ImportBatchStatus.Completed or ImportBatchStatus.CompletedWithErrors or ImportBatchStatus.Failed;
+
+    public void Dispose() => Tracker.Changed -= OnProgressChanged;
+}

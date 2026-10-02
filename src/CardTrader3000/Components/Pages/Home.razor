@@ -1,0 +1,128 @@
+@page "/"
+@inject IDbContextFactory<AppDbContext> DbFactory
+
+<PageTitle>Dashboard · CardTrader3000</PageTitle>
+
+<div class="page-header">
+    <h3 class="page-title">Dashboard</h3>
+</div>
+
+<div class="row">
+    <StatCard Title="Cards in stock" Value="@_stats.Quantity.ToString("N0")" Icon="mdi-cards-outline" Tone="primary" />
+    <StatCard Title="Distinct cards" Value="@_stats.Distinct.ToString("N0")" Icon="mdi-format-list-bulleted" Tone="info" />
+    <StatCard Title="Est. list value" Value="@_stats.ListValue.ToString("C")" Icon="mdi-currency-usd" Tone="success" />
+    <StatCard Title="Est. net return" Value="@_stats.NetValue.ToString("C")" Icon="mdi-cash-multiple" Tone="warning" />
+</div>
+
+<div class="row">
+    @* ---------- Recent imports ---------- *@
+    <div class="col-lg-7 grid-margin stretch-card">
+        <div class="card">
+            <div class="card-body">
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                    <h4 class="card-title mb-0">Recent imports</h4>
+                    <a href="history" class="small">View all</a>
+                </div>
+                @if (_recent.Count == 0)
+                {
+                    <p class="text-muted mb-0">No imports yet. Use <a href="import">Import</a> to evaluate your first cards.</p>
+                }
+                else
+                {
+                    <div class="table-responsive">
+                        <table class="table table-sm mb-0">
+                            <tbody>
+                                @foreach (var b in _recent)
+                                {
+                                    <tr>
+                                        <td><a href="history/@b.Id">#@b.Id</a></td>
+                                        <td class="text-muted small">@b.CreatedUtc.ToLocalTime().ToString("g")</td>
+                                        <td><StatusBadge Status="b.Status" /></td>
+                                        <td class="text-end">@b.TotalCardsEvaluated cards</td>
+                                        <td class="text-end text-success">@b.TotalMaxNetReturn.ToString("C")</td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                }
+            </div>
+        </div>
+    </div>
+
+    @* ---------- SGC prospects ---------- *@
+    <div class="col-lg-5 grid-margin stretch-card">
+        <div class="card">
+            <div class="card-body">
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                    <h4 class="card-title mb-0">SGC high prospects</h4>
+                    <small class="text-muted">in stock</small>
+                </div>
+                @if (_prospects.Count == 0)
+                {
+                    <p class="text-muted mb-0">None flagged yet.</p>
+                }
+                else
+                {
+                    @foreach (var c in _prospects)
+                    {
+                        <a class="d-flex justify-content-between align-items-center py-2 border-bottom border-secondary text-decoration-none"
+                           href="inventory?card=@c.Id">
+                            <div>
+                                <span class="text-white">@c.PlayerName</span>
+                                <div class="text-muted small">@c.CardSet #@c.CardNumber</div>
+                            </div>
+                            <span class="text-success">@c.EstimatedListPrice.ToString("C")</span>
+                        </a>
+                    }
+                }
+            </div>
+        </div>
+    </div>
+</div>
+
+@code {
+    private record Stats(int Quantity, int Distinct, decimal ListValue, decimal NetValue, int Batches);
+
+    private Stats _stats = new(0, 0, 0, 0, 0);
+    private List<ImportBatch> _recent = [];
+    private List<InventoryCard> _prospects = [];
+
+    protected override async Task OnInitializedAsync()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+
+        // Only three numeric columns per row, so totalling in memory is cheap even for 10k+ cards
+        // and avoids relying on SQL arithmetic over value-converted decimal columns.
+        var rows = await db.InventoryCards
+            .Where(c => c.Status != InventoryStatus.Sold)
+            .Select(c => new { c.Quantity, c.EstimatedListPrice, c.MaxNetReturn })
+            .ToListAsync();
+
+        _stats = new Stats(
+            Quantity: rows.Sum(r => r.Quantity),
+            Distinct: rows.Count,
+            ListValue: rows.Sum(r => r.EstimatedListPrice * r.Quantity),
+            NetValue: rows.Sum(r => r.MaxNetReturn * r.Quantity),
+            Batches: await db.ImportBatches.CountAsync());
+
+        _recent = await db.ImportBatches.AsNoTracking()
+            .OrderByDescending(b => b.Id)
+            .Take(5)
+            .Select(b => new ImportBatch
+            {
+                Id = b.Id,
+                CreatedUtc = b.CreatedUtc,
+                Status = b.Status,
+                TotalCardsEvaluated = b.TotalCardsEvaluated,
+                TotalMaxNetReturn = b.TotalMaxNetReturn
+            })
+            .ToListAsync();
+
+        _prospects = await db.InventoryCards.AsNoTracking()
+            .Where(c => c.SgcCandidate == SgcCandidate.HighProspect && c.Status != InventoryStatus.Sold)
+            .OrderByDescending(c => c.EstimatedListPrice)
+            .Take(6)
+            .ToListAsync();
+    }
+}

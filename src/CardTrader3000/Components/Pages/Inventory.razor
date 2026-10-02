@@ -1,0 +1,463 @@
+@page "/inventory"
+@using CardTrader3000.Services.Inventory
+@using CardTrader3000.Services.Import
+@implements IDisposable
+@inject InventoryService Cards
+@inject ImportService Imports
+@inject ImportProgressTracker Tracker
+@inject NavigationManager Nav
+
+<PageTitle>Inventory · CardTrader3000</PageTitle>
+
+<div class="page-header">
+    <h3 class="page-title">Inventory</h3>
+</div>
+
+@* ---------- Totals for the current filter ---------- *@
+<div class="row">
+    <StatCard Title="Distinct cards" Value="@(_page?.Totals.DistinctCards.ToString("N0") ?? "–")" Icon="mdi-format-list-bulleted" Tone="info" />
+    <StatCard Title="Total quantity" Value="@(_page?.Totals.Quantity.ToString("N0") ?? "–")" Icon="mdi-cards-outline" Tone="primary" />
+    <StatCard Title="Est. list value" Value="@(_page?.Totals.ListValue.ToString("C") ?? "–")" Icon="mdi-currency-usd" Tone="success" />
+    <StatCard Title="Est. net return" Value="@(_page?.Totals.NetValue.ToString("C") ?? "–")" Icon="mdi-cash-multiple" Tone="warning" />
+</div>
+
+<div class="row">
+    <div class="col-12 grid-margin">
+        <div class="card">
+            <div class="card-body">
+
+                @* ---------- Filters ---------- *@
+                <div class="row g-2 mb-3">
+                    <div class="col-lg-3 col-md-6">
+                        <input class="form-control" placeholder="Search player, set, team, title…"
+                               @bind="_search" @bind:event="oninput" @bind:after="OnSearchTyped" />
+                    </div>
+                    <div class="col-lg-3 col-md-6">
+                        <select class="form-select" @bind="_set" @bind:after="ReloadFromFirstPageAsync">
+                            <option value="">All sets</option>
+                            @foreach (var s in _sets)
+                            {
+                                <option value="@s">@s</option>
+                            }
+                        </select>
+                    </div>
+                    <div class="col-lg-2 col-md-4 col-6">
+                        <select class="form-select" @bind="_bucket" @bind:after="ReloadFromFirstPageAsync">
+                            <option value="">All buckets</option>
+                            <option value="@PriceBucket.Bucket1">Bucket 1 ($2.99+)</option>
+                            <option value="@PriceBucket.Bucket2">Bucket 2 (Rest)</option>
+                        </select>
+                    </div>
+                    <div class="col-lg-2 col-md-4 col-6">
+                        <select class="form-select" @bind="_sgc" @bind:after="ReloadFromFirstPageAsync">
+                            <option value="">Any SGC rating</option>
+                            <option value="@SgcCandidate.HighProspect">SGC: High Prospect</option>
+                            <option value="@SgcCandidate.Secondary">SGC: Secondary</option>
+                            <option value="@SgcCandidate.No">SGC: No</option>
+                        </select>
+                    </div>
+                    <div class="col-lg-2 col-md-4">
+                        <select class="form-select" @bind="_status" @bind:after="ReloadFromFirstPageAsync">
+                            <option value="@StatusFilter.Active">In stock + listed</option>
+                            <option value="@StatusFilter.InStock">In stock</option>
+                            <option value="@StatusFilter.Listed">Listed</option>
+                            <option value="@StatusFilter.Sold">Sold</option>
+                            <option value="@StatusFilter.All">All statuses</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="d-flex flex-wrap justify-content-between align-items-center mb-2 gap-2">
+                    <div class="d-flex flex-wrap align-items-center gap-3">
+                        <select class="form-select form-select-sm w-auto" @bind="_priced" @bind:after="ReloadFromFirstPageAsync">
+                            <option value="">Priced + not priced</option>
+                            <option value="@true">Priced only</option>
+                            <option value="@false">Not priced (track only)</option>
+                        </select>
+                        <div class="form-check form-check-flat mb-0">
+                            <label class="form-check-label">
+                                <input type="checkbox" class="form-check-input" @bind="_rookiesOnly" @bind:after="ReloadFromFirstPageAsync" />
+                                Rookies only
+                            </label>
+                        </div>
+                    </div>
+                    <div class="d-flex flex-wrap align-items-center gap-2">
+                        @if (_selected.Count > 0)
+                        {
+                            @if (_confirmBulk)
+                            {
+                                <span class="text-warning small">Send @_selected.Count card(s) to Claude? Listing text you edited by hand will be replaced.</span>
+                                <button class="btn btn-sm btn-warning" @onclick="RepriceSelectedAsync" disabled="@_submitting">Yes, re-price</button>
+                                <button class="btn btn-sm btn-outline-secondary" @onclick="() => _confirmBulk = false">Cancel</button>
+                            }
+                            else
+                            {
+                                <span class="text-muted small">@_selected.Count selected</span>
+                                <button class="btn btn-sm btn-outline-secondary" @onclick="ClearSelection">Clear</button>
+                                <button class="btn btn-sm btn-outline-warning" @onclick="() => _confirmBulk = true">
+                                    <i class="mdi mdi-robot-outline me-1"></i>Re-price selected
+                                </button>
+                            }
+                        }
+                        @if (HasFilters)
+                        {
+                            <button class="btn btn-sm btn-outline-secondary" @onclick="ClearFiltersAsync">
+                                <i class="mdi mdi-filter-remove-outline me-1"></i>Clear filters
+                            </button>
+                        }
+                    </div>
+                </div>
+
+                @* ---------- Re-price status ---------- *@
+                @foreach (var (batchId, cardIds) in _repricing)
+                {
+                    var p = Tracker.Get(batchId);
+                    <div class="alert alert-info py-2 d-flex justify-content-between align-items-center">
+                        <span>
+                            <i class="mdi mdi-loading mdi-spin me-1"></i>
+                            Re-pricing @cardIds.Count card(s) with Claude… @(p is null ? "" : $"{p.CardsCompleted}/{p.CardsTotal}")
+                        </span>
+                        <a href="history/@batchId" class="small">Details</a>
+                    </div>
+                }
+                @if (_repriceMessage is not null)
+                {
+                    <div class="alert @(_repriceMessageIsError ? "alert-warning" : "alert-success") py-2 d-flex justify-content-between align-items-center">
+                        <span>@_repriceMessage</span>
+                        <button class="btn-close btn-close-white" aria-label="Dismiss" @onclick="() => _repriceMessage = null"></button>
+                    </div>
+                }
+
+                @* ---------- Grid ---------- *@
+                @if (_page is null)
+                {
+                    <p class="text-muted">Loading…</p>
+                }
+                else if (_page.TotalCount == 0)
+                {
+                    <p class="text-muted my-4 text-center">
+                        @if (HasFilters) { <text>No cards match these filters.</text> }
+                        else { <text>No cards yet. <a href="import">Import some</a> to get started.</text> }
+                    </p>
+                }
+                else
+                {
+                    <div class="table-responsive">
+                        <table class="table table-hover ct-clickable-rows">
+                            <thead>
+                                <tr>
+                                    <th style="width: 1%">
+                                        <input type="checkbox" class="form-check-input m-0" title="Select all on this page"
+                                               checked="@AllOnPageSelected" @onchange="ToggleSelectPage" />
+                                    </th>
+                                    <SortHeader Label="Card" Column="InventorySort.Player" Current="_sort" Descending="_desc" OnSort="SortAsync" />
+                                    <th>Team</th>
+                                    <SortHeader Label="Qty" Column="InventorySort.Quantity" Current="_sort" Descending="_desc" OnSort="SortAsync" CssClass="text-end" />
+                                    <SortHeader Label="List" Column="InventorySort.ListPrice" Current="_sort" Descending="_desc" OnSort="SortAsync" CssClass="text-end" />
+                                    <SortHeader Label="Net" Column="InventorySort.NetReturn" Current="_sort" Descending="_desc" OnSort="SortAsync" CssClass="text-end" />
+                                    <SortHeader Label="Margin" Column="InventorySort.Margin" Current="_sort" Descending="_desc" OnSort="SortAsync" CssClass="text-end" />
+                                    <th>Bucket</th>
+                                    <th>SGC</th>
+                                    <th>Status</th>
+                                    <SortHeader Label="Updated" Column="InventorySort.Updated" Current="_sort" Descending="_desc" OnSort="SortAsync" />
+                                    <th></th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var c in _page.Items)
+                                {
+                                    var busy = IsRepricing(c.Id);
+                                    <tr @onclick="() => OpenCard(c.Id)">
+                                        <td @onclick:stopPropagation="true">
+                                            <input type="checkbox" class="form-check-input m-0"
+                                                   checked="@_selected.Contains(c.Id)" @onchange="() => ToggleSelect(c.Id)" />
+                                        </td>
+                                        <td>
+                                            <span class="text-white">@c.PlayerName</span>
+                                            @if (c.IsRookie) { <span class="badge badge-outline-success ms-1">RC</span> }
+                                            <div class="text-muted small">@c.CardSet #@c.CardNumber · @c.Parallel</div>
+                                        </td>
+                                        <td>@c.Team</td>
+                                        <td class="text-end">@c.Quantity</td>
+                                        @if (c.IsPriced)
+                                        {
+                                            <td class="text-end">@c.EstimatedListPrice.ToString("C")</td>
+                                            <td class="text-end @(c.MaxNetReturn <= 0 ? "text-danger" : "text-success")">@c.MaxNetReturn.ToString("C")</td>
+                                            <td class="text-end">@c.NetMarginPercent.ToString("0.0")%</td>
+                                            <td><BucketBadge Bucket="c.Bucket" /></td>
+                                            <td><SgcBadge Sgc="c.SgcCandidate" /></td>
+                                        }
+                                        else
+                                        {
+                                            <td colspan="5" class="text-muted small"><i class="mdi mdi-tag-off-outline me-1"></i>Not priced</td>
+                                        }
+                                        <td><StockBadge Status="c.Status" /></td>
+                                        <td class="small text-muted">@c.UpdatedUtc.ToLocalTime().ToString("d")</td>
+                                        <td class="text-end" @onclick:stopPropagation="true">
+                                            <button class="btn btn-sm @(c.IsPriced ? "btn-outline-secondary" : "btn-outline-warning") text-nowrap"
+                                                    title="@(c.IsPriced ? "Re-run Claude pricing and listing text" : "Price this card with Claude")"
+                                                    disabled="@(busy || _submitting)" @onclick="() => RepriceOneAsync(c.Id)">
+                                                @if (busy)
+                                                {
+                                                    <i class="mdi mdi-loading mdi-spin"></i>
+                                                }
+                                                else
+                                                {
+                                                    <i class="mdi mdi-refresh me-1"></i>@(c.IsPriced ? "Re-price" : "Price")
+                                                }
+                                            </button>
+                                        </td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <div class="d-flex flex-wrap justify-content-between align-items-center mt-3 gap-2">
+                        <div class="d-flex align-items-center gap-2">
+                            <small class="text-muted">
+                                @(((_page.Page - 1) * _page.PageSize) + 1)–@Math.Min(_page.Page * _page.PageSize, _page.TotalCount) of @_page.TotalCount.ToString("N0")
+                            </small>
+                            <select class="form-select form-select-sm w-auto" @bind="_pageSize" @bind:after="ReloadFromFirstPageAsync">
+                                @foreach (var size in InventoryService.PageSizes)
+                                {
+                                    <option value="@size">@size / page</option>
+                                }
+                            </select>
+                        </div>
+                        <Pager Page="_page.Page" PageCount="_page.PageCount" PageChanged="GoToPageAsync" />
+                    </div>
+                }
+            </div>
+        </div>
+    </div>
+</div>
+
+<CardDetailModal CardId="_openCardId" OnClose="CloseCard" OnChanged="OnCardChangedAsync" />
+
+@code {
+    /// <summary>Deep link: /inventory?card=123 opens that card (used by the History page).</summary>
+    [SupplyParameterFromQuery(Name = "card")] public int? CardFromQuery { get; set; }
+
+    private InventoryPage? _page;
+    private List<string> _sets = [];
+
+    private string _search = "";
+    private string _set = "";
+    private PriceBucket? _bucket;
+    private SgcCandidate? _sgc;
+    private StatusFilter _status = StatusFilter.Active;
+    private bool _rookiesOnly;
+    private InventorySort _sort = InventorySort.Updated;
+    private bool _desc = true;
+    private int _pageNumber = 1;
+    private int _pageSize = InventoryService.PageSizes[0];
+
+    private bool? _priced;
+
+    private int? _openCardId;
+    private CancellationTokenSource? _searchDebounce;
+
+    // ---- Selection + re-pricing ----
+    private readonly HashSet<int> _selected = [];
+    private bool _confirmBulk;
+    private bool _submitting;
+    private Dictionary<int, List<int>> _repricing = new();   // batch id -> card ids
+    private string? _repriceMessage;
+    private bool _repriceMessageIsError;
+
+    private bool HasFilters =>
+        _search.Length > 0 || _set.Length > 0 || _bucket is not null || _sgc is not null
+        || _status != StatusFilter.Active || _rookiesOnly || _priced is not null;
+
+    private bool AllOnPageSelected => _page is { Items.Count: > 0 } && _page.Items.All(c => _selected.Contains(c.Id));
+
+    private bool IsRepricing(int cardId) => _repricing.Values.Any(ids => ids.Contains(cardId));
+
+    protected override async Task OnInitializedAsync()
+    {
+        Tracker.Changed += OnProgress;
+        _repricing = await Imports.GetPendingRepricesAsync();
+        _sets = await Cards.GetSetsAsync();
+        await LoadAsync();
+    }
+
+    protected override void OnParametersSet()
+    {
+        if (CardFromQuery is not null) _openCardId = CardFromQuery;
+    }
+
+    private async Task LoadAsync()
+    {
+        _page = await Cards.SearchAsync(new InventoryQuery
+        {
+            Search = _search,
+            CardSet = _set,
+            Bucket = _bucket,
+            Sgc = _sgc,
+            Status = _status,
+            RookiesOnly = _rookiesOnly,
+            Priced = _priced,
+            SortBy = _sort,
+            Descending = _desc,
+            Page = _pageNumber,
+            PageSize = _pageSize
+        });
+        _pageNumber = _page.Page; // the service clamps out-of-range pages
+    }
+
+    private Task ReloadFromFirstPageAsync()
+    {
+        _pageNumber = 1;
+        return LoadAsync();
+    }
+
+    /// <summary>Waits for a 300 ms pause in typing before querying.</summary>
+    private async Task OnSearchTyped()
+    {
+        _searchDebounce?.Cancel();
+        _searchDebounce = new CancellationTokenSource();
+        var token = _searchDebounce.Token;
+        try
+        {
+            await Task.Delay(300, token);
+            await ReloadFromFirstPageAsync();
+        }
+        catch (TaskCanceledException) { }
+    }
+
+    private async Task SortAsync(InventorySort column)
+    {
+        if (_sort == column)
+        {
+            _desc = !_desc;
+        }
+        else
+        {
+            _sort = column;
+            // Text columns start A→Z; numbers and dates start highest/newest first.
+            _desc = column is not (InventorySort.Player or InventorySort.Set);
+        }
+        await ReloadFromFirstPageAsync();
+    }
+
+    private async Task GoToPageAsync(int page)
+    {
+        _pageNumber = page;
+        await LoadAsync();
+    }
+
+    private async Task ClearFiltersAsync()
+    {
+        _search = "";
+        _set = "";
+        _bucket = null;
+        _sgc = null;
+        _status = StatusFilter.Active;
+        _rookiesOnly = false;
+        _priced = null;
+        await ReloadFromFirstPageAsync();
+    }
+
+    private void OpenCard(int id) => _openCardId = id;
+
+    private void CloseCard()
+    {
+        _openCardId = null;
+        if (CardFromQuery is not null)
+            Nav.NavigateTo("inventory", replace: true); // drop ?card= so a refresh doesn't reopen it
+    }
+
+    private async Task OnCardChangedAsync()
+    {
+        _sets = await Cards.GetSetsAsync();
+        _repricing = await Imports.GetPendingRepricesAsync(); // picks up a re-price started from the card modal
+        await LoadAsync();
+    }
+
+    // ---- Selection ----
+
+    private void ToggleSelect(int id)
+    {
+        if (!_selected.Remove(id)) _selected.Add(id);
+        _confirmBulk = false;
+    }
+
+    private void ToggleSelectPage()
+    {
+        if (_page is null) return;
+        if (AllOnPageSelected)
+            foreach (var c in _page.Items) _selected.Remove(c.Id);
+        else
+            foreach (var c in _page.Items) _selected.Add(c.Id);
+        _confirmBulk = false;
+    }
+
+    private void ClearSelection()
+    {
+        _selected.Clear();
+        _confirmBulk = false;
+    }
+
+    // ---- Re-pricing ----
+
+    private Task RepriceOneAsync(int cardId) => StartRepriceAsync([cardId]);
+
+    private async Task RepriceSelectedAsync()
+    {
+        await StartRepriceAsync(_selected.ToList());
+        ClearSelection();
+    }
+
+    private async Task StartRepriceAsync(List<int> cardIds)
+    {
+        _submitting = true;
+        _repriceMessage = null;
+        try
+        {
+            var batchId = await Imports.RepriceAsync(cardIds);
+            if (batchId is null)
+            {
+                ShowRepriceMessage("Those cards no longer exist.", error: true);
+                return;
+            }
+            _repricing[batchId.Value] = cardIds;
+        }
+        catch (Exception ex)
+        {
+            ShowRepriceMessage(ex.Message, error: true);
+        }
+        finally
+        {
+            _submitting = false;
+        }
+    }
+
+    private void OnProgress(ImportProgress p)
+    {
+        if (!_repricing.ContainsKey(p.BatchId)) return;
+
+        _ = InvokeAsync(async () =>
+        {
+            if (p.IsFinished)
+            {
+                _repricing.Remove(p.BatchId);
+                ShowRepriceMessage(p.Message, error: p.Status != ImportBatchStatus.Completed);
+            }
+            // Reload as each chunk lands so prices update in place.
+            await LoadAsync();
+            StateHasChanged();
+        });
+    }
+
+    private void ShowRepriceMessage(string message, bool error)
+    {
+        _repriceMessage = message;
+        _repriceMessageIsError = error;
+    }
+
+    public void Dispose()
+    {
+        _searchDebounce?.Cancel();
+        Tracker.Changed -= OnProgress;
+    }
+}
