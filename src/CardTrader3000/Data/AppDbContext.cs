@@ -8,6 +8,9 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<InventoryCard> InventoryCards => Set<InventoryCard>();
     public DbSet<ImportBatch> ImportBatches => Set<ImportBatch>();
     public DbSet<ImportBatchItem> ImportBatchItems => Set<ImportBatchItem>();
+    public DbSet<EbaySettings> EbaySettings => Set<EbaySettings>();
+    public DbSet<EbayListing> EbayListings => Set<EbayListing>();
+    public DbSet<EbayListingImage> EbayListingImages => Set<EbayListingImage>();
 
     protected override void ConfigureConventions(ModelConfigurationBuilder configurationBuilder)
     {
@@ -22,6 +25,8 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
         configurationBuilder.Properties<ImportSource>().HaveConversion<string>().HaveMaxLength(20);
         configurationBuilder.Properties<ImportBatchStatus>().HaveConversion<string>().HaveMaxLength(30);
         configurationBuilder.Properties<ImportItemStatus>().HaveConversion<string>().HaveMaxLength(20);
+        configurationBuilder.Properties<EbayEnvironment>().HaveConversion<string>().HaveMaxLength(20);
+        configurationBuilder.Properties<EbayListingStatus>().HaveConversion<string>().HaveMaxLength(20);
     }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
@@ -68,6 +73,50 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
                 .WithMany(x => x.ImportItems)
                 .HasForeignKey(x => x.InventoryCardId)
                 .OnDelete(DeleteBehavior.SetNull);
+        });
+
+        modelBuilder.Entity<EbaySettings>(e =>
+        {
+            e.HasIndex(x => x.Environment).IsUnique();
+            e.Property(x => x.DefaultFulfillmentPolicyId).HasMaxLength(50);
+            e.Property(x => x.DefaultReturnPolicyId).HasMaxLength(50);
+            e.Property(x => x.DefaultPaymentPolicyId).HasMaxLength(50);
+            e.Property(x => x.MerchantLocationKey).HasMaxLength(36);
+            e.Property(x => x.PromotionCampaignId).HasMaxLength(50);
+            e.Property(x => x.StoreCategories).HasMaxLength(2000);
+        });
+
+        modelBuilder.Entity<EbayListing>(e =>
+        {
+            e.Property(x => x.Sku).HasMaxLength(50);
+            e.Property(x => x.Title).HasMaxLength(80);
+            e.Property(x => x.CategoryId).HasMaxLength(20);
+            e.Property(x => x.CardConditionValueId).HasMaxLength(20);
+            e.Property(x => x.OfferId).HasMaxLength(50);
+            e.Property(x => x.ListingId).HasMaxLength(50);
+            e.Property(x => x.StoreCategoryName).HasMaxLength(100);
+
+            e.HasIndex(x => new { x.Environment, x.Sku }).IsUnique();
+            e.HasIndex(x => x.InventoryCardId);
+            e.HasIndex(x => x.Status);
+
+            // Deleting a card keeps its listing record (e.g. a live eBay listing), just unlinked.
+            e.HasOne(x => x.InventoryCard)
+                .WithMany()
+                .HasForeignKey(x => x.InventoryCardId)
+                .OnDelete(DeleteBehavior.SetNull);
+
+            e.HasMany(x => x.Images)
+                .WithOne(x => x.EbayListing)
+                .HasForeignKey(x => x.EbayListingId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<EbayListingImage>(e =>
+        {
+            e.Property(x => x.LocalFileName).HasMaxLength(100);
+            e.Property(x => x.SourceUrl).HasMaxLength(1000);
+            e.Property(x => x.EbayUrl).HasMaxLength(1000);
         });
     }
 }

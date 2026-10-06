@@ -51,6 +51,10 @@
                 {
                     <i class="mdi mdi-refresh me-1"></i><text>Re-price from inventory (stock unchanged)</text>
                 }
+                else if (_batch.Source == ImportSource.Json)
+                {
+                    <i class="mdi mdi-code-json me-1"></i>@(_batch.SourceFileName ?? "JSON upload")
+                }
                 else
                 {
                     <i class="mdi mdi-keyboard-outline me-1"></i><text>Manual entry</text>
@@ -155,6 +159,10 @@
                                         else
                                         {
                                             <span class="badge @(i.CreatedNewCard ? "badge-outline-success" : "badge-outline-info")">@(i.CreatedNewCard ? "New" : "Merged")</span>
+                                        }
+                                        @if (i.PricingProvided)
+                                        {
+                                            <span class="badge badge-outline-primary ms-1" title="List price came from the import file; no Claude call">From file</span>
                                         }
                                     </td>
                                     @if (i.SkipPricing)

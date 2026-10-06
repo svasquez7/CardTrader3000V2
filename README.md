@@ -33,8 +33,95 @@ Then open **Import**, upload a CSV or paste lines such as `2013 Topps Football, 
 When an update changes the entities, add a migration once from `src/CardTrader3000`, then run as usual (it's applied on startup):
 
 ```bash
-dotnet ef migrations add TrackOnlyAndReprice --output-dir Data/Migrations
+dotnet ef migrations add TrackOnlyAndReprice --output-dir Data/Migrations   # track-only + re-price
+dotnet ef migrations add JsonImport --output-dir Data/Migrations            # JSON import
+dotnet ef migrations add EbayListings --output-dir Data/Migrations          # eBay listing
+dotnet ef migrations add EbayStoreCategories --output-dir Data/Migrations   # eBay Store categories
 ```
+
+Add only the ones you haven't added yet; `dotnet ef migrations list` shows what you have.
+
+## eBay listing (sandbox)
+
+Open a card in **Inventory** and click **List on eBay**. This opens a listing screen pre-filled from the card. Review it, add photos, and click **Publish to eBay**.
+
+**Every listing is Buy It Now (Good 'Til Cancelled) with Best Offer.** Offers under **80%** of the price are auto-declined, and offers at **90%** or more are auto-accepted. Each listing is also added to a **2% general Promoted Listings** campaign. All three numbers are defaults you can change in eBay Settings, or on each listing.
+
+### One-time setup
+
+1. **Developer keys.** In the eBay developer portal, open your **Sandbox** keyset.
+   - Under **User Tokens → Get a Token from eBay via Your Application**, add an *eBay Redirect URL* (RuName).
+   - Set its **auth accepted URL** to `https://localhost:7243/ebay/callback` and its **auth declined URL** to `https://localhost:7243/ebay/declined`.
+   - Then, from `src/CardTrader3000`:
+     ```bash
+     dotnet user-secrets set "Ebay:ClientId" "<App ID>"
+     dotnet user-secrets set "Ebay:ClientSecret" "<Cert ID>"
+     dotnet user-secrets set "Ebay:RuName" "<RuName>"
+     ```
+2. **Sandbox seller.** Create a sandbox test user in the developer portal. You'll sign in as this user.
+3. **eBay Settings page** (sidebar):
+   - **Connect to eBay** and sign in as the sandbox user. Tokens are encrypted with ASP.NET Data Protection; the keys live in `App_Data/keys`.
+   - **Policies:** sandbox accounts usually start with none. Click **Enable business policies**, wait a few minutes, then **Create starter policies**. That creates free eBay Standard Envelope shipping, 30-day returns (or no returns) and immediate payment. If you already have policies, just pick the defaults.
+   - **Ship-from location:** enter a ZIP code and click **Add**. eBay requires a location on every offer.
+   - Save the defaults.
+
+### The listing screen
+
+- **Pre-filled from the card:**
+  - title, description, price (the card's estimate), quantity (your stock)
+  - condition: Ungraded, Near Mint or Better
+  - item specifics: sport, league, player, team, manufacturer, set, season, card number, parallel, rookie and so on
+  - your default policies, Best Offer percentages and promotion rate
+- **Store category:** pick one of your eBay Store categories. The list is set in eBay Settings and defaults to Additional Sports & TCG, Apparel, Baseball, Basketball, Football and Other. New listings choose Football, Baseball or Basketball from the card's sport; other sports get Additional Sports & TCG. eBay's docs show category paths (`/Football`) while sellers report plain names working, so the app sends `/Name` and retries with `Name` if eBay rejects it. Store categories only work on accounts with an eBay Store subscription, and sandbox test users usually don't have one; choose **(none)** there.
+- **Photos:** upload up to 24 (12 MB each), or paste `https://` image URLs. Reorder them; the first is the gallery photo. Uploaded photos are stored in `App_Data/listing-images` and sent to eBay's picture hosting (Media API) when you publish.
+- **Live figures:** the Best Offer auto-decline and auto-accept amounts, the promotion fee per sale, and the estimated net after eBay fees, the envelope and the ad fee.
+- **Publish** runs these steps:
+  1. upload the photos
+  2. create the inventory item (condition `USED_VERY_GOOD` = Ungraded, with descriptor `40001` = Card Condition)
+  3. create the offer: fixed price, Best Offer terms, policies, location
+  4. publish it
+  5. add the listing to the promotion campaign
+- **After publishing:**
+  - The card's status changes to **Listed**.
+  - **Update listing on eBay** revises the live listing.
+  - **End listing** withdraws it, and the card goes back to In Stock.
+  - If promotion fails, the listing still stays live and you get a warning.
+- **eBay Listings** (sidebar) lists drafts and published, failed and ended listings, with links to each listing on eBay.
+
+### Sandbox notes
+
+- The **Media API sandbox host** (`apim.sandbox.ebay.com`) has a history of not resolving. If photo upload fails with a "couldn't reach" message, paste image URLs instead. They're sent to eBay as-is. The production Media API works normally.
+- **eBay Standard Envelope** is only allowed for items up to $20. The listing screen warns you when the price is higher.
+- Item specifics are best-effort defaults. If eBay requires one that's missing, the publish error names it; add it under **Item specifics** and publish again.
+- To switch to production later, set `Ebay:Environment` to `Production`, use your production keys and RuName, and connect again. Sandbox and production keep separate settings and listings.
+
+## JSON import
+
+The Import page has a third mode, **JSON file**, alongside CSV and manual entry, which work as before. Each card can carry any of its data points. Only `card_set`, `player` and `card_number` are required:
+
+| Field | Aliases | Notes |
+|---|---|---|
+| `card_set` | `set`, `set_name` | required |
+| `player` | `player_name`, `name` | required |
+| `card_number` | `number` | required, a leading `#` is removed |
+| `parallel` | `parallel_feature`, `variant` | defaults to `Base` |
+| `quantity` | `qty` | 1 to 10,000, default 1 |
+| `status` | | `In Stock`, `Listed`, `Sold` |
+| `team` | | |
+| `is_rookie` | `rookie`, `rc` | inferred from "RC" or "Rookie" in the title when missing |
+| `estimated_list_price` | `list_price`, numeric `price` | **when present, the card is stored with this price and no Claude call is made** |
+| `sgc_grading_candidate` | `sgc` | `High Prospect`, `Secondary`, `No` |
+| `sales_strategy` | | |
+| `ebay_title` | `title` | trimmed to 80 characters |
+| `ebay_description` | `description`, `description_template` | line breaks kept |
+| `price_with_claude` | boolean `price` | for cards **without** a list price: `false` makes the card track-only. Otherwise the page's default applies. |
+
+- **The file can be shaped three ways:** an array of cards, `{ "cards": [...] }`, or a single card. **The Phase 1 prompt's output can be imported as-is**: nested `pricing_and_returns` and `ebay_listing_details` are read automatically. Field names can be snake_case or camelCase.
+- **Fee, net, margin and bucket fields in the file are ignored.** They're recalculated from the list price using the configured rates, so the math always matches the rest of the app.
+- **Your values win.** When a card goes to Claude because it has no list price, any team, title, description, SGC rating or status in the file overrides what Claude returns.
+- Existing cards have their quantity increased, as with CSV, and the file's data points overwrite their details.
+- Cards priced from the file show **From file** in History and add nothing to token usage.
+- See `samples/cards-sample.json` (all three kinds of card) and `samples/phase1-output-sample.json` (the prompt's output format).
 
 ## Track-only cards and re-pricing
 
@@ -96,7 +183,8 @@ src/CardTrader3000/
 ├── Prompts/card-evaluation.md     the Claude prompt (embedded resource, edit freely)
 ├── Services/
 │   ├── Claude/                    ClaudeCardEvaluator + API wire types + output schema
-│   ├── Import/                    parser, ImportService, queue/progress, worker, processor, history queries
+│   ├── Ebay/                      OAuth, API client (Account/Inventory/Media/Marketing), listing service, image store
+│   ├── Import/                    CSV + JSON parsers, ImportService, queue/progress, worker, processor, history queries
 │   ├── Inventory/                 InventoryService (search, paging, sort, edits)
 │   └── Pricing/                   FeeCalculator, FeeOptions, ListingText (80-char title guard)
 ├── Components/                    Corona dark layout, pages, shared widgets (badges, pager, card modal)

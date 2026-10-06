@@ -9,8 +9,11 @@ namespace CardTrader3000.Services.Import;
 /// <summary>
 /// A sanitized, validated input line: card set, player name, card number, parallel, and whether
 /// to price it with Claude (<see cref="Price"/> false = add to inventory only).
+/// JSON imports can also carry a <see cref="Quantity"/> and extra <see cref="Data"/> points.
 /// </summary>
-public sealed record CardLine(int LineNumber, string CardSet, string PlayerName, string CardNumber, string Parallel, bool Price = true)
+public sealed record CardLine(
+    int LineNumber, string CardSet, string PlayerName, string CardNumber, string Parallel,
+    bool Price = true, int Quantity = 1, ProvidedCardData? Data = null)
 {
     public string Key => CardKey.Normalize(CardSet, PlayerName, CardNumber, Parallel);
 }
@@ -19,7 +22,7 @@ public sealed record LineError(int LineNumber, string Message, string RawText);
 
 /// <summary>
 /// Several identical lines in one import, combined into one card with a quantity.
-/// Priced if any of the lines asked for pricing.
+/// Priced if any of the lines asked for pricing. Data points come from the first line.
 /// </summary>
 public sealed record DistinctCardLine(CardLine First, int Quantity, IReadOnlyList<int> LineNumbers, bool Price);
 
@@ -31,7 +34,7 @@ public sealed class ParseResult
     /// <summary>Groups duplicate lines (same normalized key), keeping first-seen order.</summary>
     public IReadOnlyList<DistinctCardLine> Distinct() =>
         Lines.GroupBy(l => l.Key)
-             .Select(g => new DistinctCardLine(g.First(), g.Count(), g.Select(l => l.LineNumber).ToList(), g.Any(l => l.Price)))
+             .Select(g => new DistinctCardLine(g.First(), g.Sum(l => l.Quantity), g.Select(l => l.LineNumber).ToList(), g.Any(l => l.Price)))
              .ToList();
 }
 

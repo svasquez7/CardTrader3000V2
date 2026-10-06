@@ -4,6 +4,8 @@
 @inject InventoryService Inventory
 @inject ImportService Imports
 @inject ImportProgressTracker Tracker
+@inject CardTrader3000.Services.Ebay.EbayListingService EbayListings
+@inject NavigationManager Nav
 
 @* Rendered by Blazor (no Bootstrap JS): visible whenever CardId has a value. *@
 @if (CardId is not null)
@@ -47,6 +49,10 @@
                                     <i class="mdi mdi-robot-outline me-1"></i>@(_card.IsPriced ? "Re-price" : "Price with Claude")
                                 </button>
                             }
+                            <button class="btn btn-sm btn-primary" disabled="@_busy" @onclick="ListOnEbayAsync"
+                                    title="Open (or create) this card's eBay listing">
+                                <i class="mdi mdi-storefront-outline me-1"></i>List on eBay
+                            </button>
                             <button type="button" class="btn-close btn-close-white ms-2" aria-label="Close" @onclick="CloseAsync"></button>
                         </div>
                     </div>
@@ -174,6 +180,7 @@
                                                     {
                                                         <text>@(item.CreatedNewCard ? "New" : "Merged")</text>
                                                         @if (item.SkipPricing) { <span class="text-muted small"> · track only</span> }
+                                                        @if (item.PricingProvided) { <span class="text-muted small"> · priced from file</span> }
                                                     }
                                                 </td>
                                             </tr>
@@ -311,6 +318,23 @@
             await OnChanged.InvokeAsync();
             StateHasChanged();
         });
+    }
+
+    /// <summary>Opens the card's eBay listing, creating a draft from the card's data the first time.</summary>
+    private async Task ListOnEbayAsync()
+    {
+        if (_card is null) return;
+        _busy = true;
+        try
+        {
+            var listingId = await EbayListings.GetOrCreateDraftForCardAsync(_card.Id);
+            Nav.NavigateTo($"listings/{listingId}");
+        }
+        catch (InvalidOperationException ex)
+        {
+            ShowMessage(ex.Message, error: true);
+        }
+        finally { _busy = false; }
     }
 
     public void Dispose() => Tracker.Changed -= OnProgress;

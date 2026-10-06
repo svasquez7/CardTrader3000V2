@@ -1,0 +1,172 @@
+@page "/listings"
+@using CardTrader3000.Services.Ebay
+@using CardTrader3000.Services.Pricing
+@using Microsoft.Extensions.Options
+@inject EbayListingService Listings
+@inject EbayApiClient Api
+@inject FeeCalculator Fees
+@inject IOptions<EbayOptions> EbayOpts
+@inject NavigationManager Nav
+
+<PageTitle>eBay Listings · CardTrader3000</PageTitle>
+
+<div class="page-header">
+    <h3 class="page-title">eBay Listings <span class="badge badge-outline-secondary ms-1">@EbayOpts.Value.Environment</span></h3>
+    <a class="btn btn-outline-secondary" href="ebay"><i class="mdi mdi-cog-outline me-1"></i>eBay Settings</a>
+</div>
+
+@* ---------- Totals for the current filter (listing price + shipping policy, like the listing editor) ---------- *@
+<div class="row">
+    <StatCard Title="Listings" Value="@(_rows?.Count.ToString("N0") ?? "–")" Icon="mdi-format-list-bulleted" Tone="info" />
+    <StatCard Title="Total quantity" Value="@(_rows?.Sum(r => r.Listing.Quantity).ToString("N0") ?? "–")" Icon="mdi-cards-outline" Tone="primary" />
+    <StatCard Title="List value + shipping" Value="@(_rows?.Sum(r => r.Estimate.SaleTotal * r.Listing.Quantity).ToString("C") ?? "–")" Icon="mdi-currency-usd" Tone="success" />
+    <StatCard Title="Est. net return" Value="@(_rows?.Sum(r => r.Estimate.Net * r.Listing.Quantity).ToString("C") ?? "–")" Icon="mdi-cash-multiple" Tone="warning" />
+</div>
+
+<div class="card">
+    <div class="card-body">
+        <div class="d-flex flex-wrap justify-content-between align-items-center mb-3 gap-2">
+            <p class="text-muted small mb-0">
+                To list a card, open it from <a href="inventory">Inventory</a> and click <strong>List on eBay</strong>.
+                Net = price + shipping charged − eBay fee (@((Fees.Rates.FinalValueFeeRate * 100m).ToString("0.##"))% + @Fees.Rates.FixedOrderFee.ToString("C"))
+                − @Fees.Rates.StandardEnvelopeRate.ToString("C") envelope − promotion fee, per card.
+            </p>
+            <select class="form-select form-select-sm w-auto" @bind="_status" @bind:after="LoadAsync">
+                <option value="">All statuses</option>
+                <option value="@EbayListingStatus.Draft">Draft</option>
+                <option value="@EbayListingStatus.Published">Published</option>
+                <option value="@EbayListingStatus.Failed">Failed</option>
+                <option value="@EbayListingStatus.Ended">Ended</option>
+            </select>
+        </div>
+
+        @if (_policyError is not null)
+        {
+            <div class="alert alert-warning py-2 small">
+                Couldn't load your shipping policies, so shipping is assumed free in these numbers: @_policyError
+            </div>
+        }
+
+        @if (_rows is null)
+        {
+            <p class="text-muted">Loading…</p>
+        }
+        else if (_rows.Count == 0)
+        {
+            <p class="text-muted text-center my-4">No listings yet.</p>
+        }
+        else
+        {
+            <div class="table-responsive">
+                <table class="table table-hover ct-clickable-rows">
+                    <thead>
+                        <tr>
+                            <th style="width:64px"></th>
+                            <th>Title</th>
+                            <th class="text-end">Qty</th>
+                            <th class="text-end">Price</th>
+                            <th class="text-end">Shipping</th>
+                            <th class="text-end">Net</th>
+                            <th class="text-end">Margin</th>
+                            <th class="text-end">Promo</th>
+                            <th>Status</th>
+                            <th>eBay</th>
+                            <th>Updated</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var row in _rows)
+                        {
+                            var l = row.Listing;
+                            var e = row.Estimate;
+                            var thumb = l.Images.OrderBy(i => i.SortOrder).FirstOrDefault();
+                            <tr @onclick="() => Open(l.Id)">
+                                <td>
+                                    @if (thumb is not null)
+                                    {
+                                        <img src="@ThumbSrc(l.Id, thumb)" alt="" style="width:48px;height:48px;object-fit:contain" />
+                                    }
+                                    else
+                                    {
+                                        <i class="mdi mdi-image-off-outline text-muted"></i>
+                                    }
+                                </td>
+                                <td>
+                                    <span class="text-white">@l.Title</span>
+                                    @if (!string.IsNullOrEmpty(l.LastError))
+                                    {
+                                        <div class="small text-warning text-truncate" style="max-width:480px" title="@l.LastError">@l.LastError</div>
+                                    }
+                                </td>
+                                <td class="text-end">@l.Quantity</td>
+                                <td class="text-end">@l.Price.ToString("C")</td>
+                                <td class="text-end @(row.Shipping.FromName ? "" : "text-warning")" title="@row.Shipping.Note">
+                                    @(e.ShippingCharged == 0 ? "Free" : e.ShippingCharged.ToString("C"))
+                                </td>
+                                <td class="text-end @(e.Net <= 0 ? "text-danger" : "text-success")"
+                                    title="@($"Sale {e.SaleTotal:C} − eBay fee {e.EbayFee:C} − envelope {e.Postage:C} − ad {e.AdFee:C}")">
+                                    @e.Net.ToString("C")
+                                </td>
+                                <td class="text-end">@e.MarginPercent.ToString("0.0")%</td>
+                                <td class="text-end">@(l.PromotionPercent > 0 ? $"{l.PromotionPercent:0.0#}%" : "—")</td>
+                                <td><ListingStatusBadge Status="l.Status" /></td>
+                                <td @onclick:stopPropagation="true">
+                                    @if (l.ListingId is not null && l.Status == EbayListingStatus.Published)
+                                    {
+                                        <a href="@EbayOpts.Value.ListingUrl(l.ListingId)" target="_blank" rel="noopener">@l.ListingId</a>
+                                    }
+                                </td>
+                                <td class="small text-muted">@l.UpdatedUtc.ToLocalTime().ToString("g")</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+            <small class="text-muted">
+                Shipping comes from each listing's shipping policy name ("Free …" or "… $0.99 …"); yellow means it couldn't be read and was assumed free.
+                Margin is net ÷ (price + shipping). Figures are per card shipped alone.
+            </small>
+        }
+    </div>
+</div>
+
+@code {
+    private sealed record Row(EbayListing Listing, ShippingCharge Shipping, ListingEstimate Estimate);
+
+    private List<Row>? _rows;
+    private EbayListingStatus? _status;
+    private Dictionary<string, string> _policyNames = new();
+    private bool _policiesLoaded;
+    private string? _policyError;
+
+    protected override Task OnInitializedAsync() => LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        if (!_policiesLoaded)
+        {
+            _policiesLoaded = true;
+            try
+            {
+                _policyNames = (await Api.GetFulfillmentPoliciesAsync()).ToDictionary(p => p.Id, p => p.Name);
+            }
+            catch (EbayApiException ex)
+            {
+                _policyError = ex.Message;
+            }
+        }
+
+        var listings = await Listings.ListAsync(_status);
+        _rows = listings.Select(l =>
+        {
+            var name = l.FulfillmentPolicyId is not null && _policyNames.TryGetValue(l.FulfillmentPolicyId, out var n) ? n : null;
+            var shipping = ListingEconomics.ParseShipping(name);
+            return new Row(l, shipping, ListingEconomics.Estimate(l.Price, shipping.Amount, l.PromotionPercent, Fees.Rates));
+        }).ToList();
+    }
+
+    private void Open(int id) => Nav.NavigateTo($"listings/{id}");
+
+    private static string ThumbSrc(int listingId, EbayListingImage img) =>
+        img.SourceUrl ?? (img.LocalFileName is not null ? $"listing-images/{listingId}/{img.LocalFileName}" : img.EbayUrl ?? "");
+}

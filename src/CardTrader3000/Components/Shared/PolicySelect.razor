@@ -1,0 +1,30 @@
+@using CardTrader3000.Services.Ebay
+
+<div class="mb-2">
+    <label class="form-label small text-muted mb-1">@Label</label>
+    <select class="form-select" value="@(Value ?? "")" @onchange="OnChangedAsync" disabled="@Disabled">
+        <option value="">@(Policies.Count == 0 ? "No policies found" : "Choose…")</option>
+        @foreach (var p in Policies)
+        {
+            <option value="@p.Id">@p.Name</option>
+        }
+        @if (Value is not null && Policies.Count > 0 && Policies.All(p => p.Id != Value))
+        {
+            <option value="@Value">(saved policy @Value)</option>
+        }
+    </select>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public string Label { get; set; } = "";
+    [Parameter, EditorRequired] public List<EbayPolicy> Policies { get; set; } = [];
+    [Parameter] public string? Value { get; set; }
+    [Parameter] public EventCallback<string?> ValueChanged { get; set; }
+    [Parameter] public bool Disabled { get; set; }
+
+    private Task OnChangedAsync(ChangeEventArgs e)
+    {
+        var value = e.Value?.ToString();
+        return ValueChanged.InvokeAsync(string.IsNullOrEmpty(value) ? null : value);
+    }
+}

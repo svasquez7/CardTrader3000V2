@@ -34,6 +34,19 @@ public class ImportBatchItem
     /// </summary>
     public bool SkipPricing { get; set; }
 
+    /// <summary>
+    /// True when the import file supplied a list price: the card is stored with that price (fees
+    /// recalculated in code) and no Claude call is made.
+    /// </summary>
+    public bool PricingProvided { get; set; }
+
+    /// <summary>
+    /// Card data points from a JSON import (team, rookie, price, SGC, strategy, title, description,
+    /// status), serialized <see cref="Services.Import.ProvidedCardData"/>. Applied over Claude's
+    /// values when both exist. Null for CSV/manual lines.
+    /// </summary>
+    public string? ProvidedDataJson { get; set; }
+
     public ImportItemStatus Status { get; set; } = ImportItemStatus.Pending;
 
     /// <summary>True if this line created a new inventory row; false if it increased an existing one.</summary>

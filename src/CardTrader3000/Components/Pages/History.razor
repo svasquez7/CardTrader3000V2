@@ -69,6 +69,10 @@
                                             {
                                                 <i class="mdi mdi-refresh text-muted me-1"></i><text>Re-price</text>
                                             }
+                                            else if (b.Source == ImportSource.Json)
+                                            {
+                                                <i class="mdi mdi-code-json text-muted me-1"></i>@(b.SourceFileName ?? "JSON")
+                                            }
                                             else
                                             {
                                                 <i class="mdi mdi-keyboard-outline text-muted me-1"></i><text>Manual entry</text>

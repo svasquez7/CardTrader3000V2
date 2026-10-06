@@ -1,0 +1,43 @@
+{
+  "summary": {
+    "total_cards_evaluated": 1,
+    "bucket_1_count": 1,
+    "bucket_2_count": 0,
+    "total_gross_revenue": 3.99,
+    "total_ebay_fees": 0.83,
+    "total_postage": 0.78,
+    "total_max_net_return": 2.38,
+    "overall_net_margin_percent": 59.6,
+    "fee_assumptions": { "ebay_final_value_fee_rate": 0.1325, "ebay_fixed_order_fee": 0.30, "ebay_standard_envelope_rate_1oz": 0.78 }
+  },
+  "cards": [
+    {
+      "id": 1,
+      "card_set": "2013 Topps Football",
+      "player": "Von Miller",
+      "card_number": "290",
+      "parallel_feature": "Base",
+      "team": "Denver Broncos",
+      "bucket": "Bucket 1 ($2.99+)",
+      "pricing_and_returns": {
+        "estimated_list_price": 3.99,
+        "ebay_fee": 0.83,
+        "postage_cost": 0.78,
+        "total_fees": 1.61,
+        "max_net_return": 2.38,
+        "net_return_margin_percent": 59.6
+      },
+      "sgc_grading_candidate": "No",
+      "sales_strategy": "List individually at BIN with free envelope shipping.",
+      "ebay_listing_details": {
+        "category": "Sports Mem, Cards & Fan Shop > Sports Trading Cards > Trading Card Singles",
+        "title": "2013 Topps #290 Von Miller Denver Broncos",
+        "title_character_count": 40,
+        "condition": "Ungraded - Near Mint or Better",
+        "format": "Buy It Now",
+        "shipping_option": "Free Shipping (eBay Standard Envelope)",
+        "description_template": "Card Details: Von Miller, 2013 Topps Football #290, Base, Denver Broncos."
+      }
+    }
+  ]
+}

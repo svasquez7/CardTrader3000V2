@@ -3,6 +3,7 @@ using System;
 using CardTrader3000.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
@@ -10,230 +11,14 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace CardTrader3000.Data.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20261004042256_JsonImport")]
+    partial class JsonImport
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "10.0.12");
-
-            modelBuilder.Entity("CardTrader3000.Data.Entities.EbayListing", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("INTEGER");
-
-                    b.Property<string>("AdId")
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("AspectsJson")
-                        .IsRequired()
-                        .HasColumnType("TEXT");
-
-                    b.Property<double>("BestOfferAutoAcceptPercent")
-                        .HasColumnType("REAL");
-
-                    b.Property<double>("BestOfferMinPercent")
-                        .HasColumnType("REAL");
-
-                    b.Property<string>("CampaignId")
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("CardConditionValueId")
-                        .IsRequired()
-                        .HasMaxLength(20)
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("CategoryId")
-                        .IsRequired()
-                        .HasMaxLength(20)
-                        .HasColumnType("TEXT");
-
-                    b.Property<DateTime>("CreatedUtc")
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("Description")
-                        .IsRequired()
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("Environment")
-                        .IsRequired()
-                        .HasMaxLength(20)
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("FulfillmentPolicyId")
-                        .HasColumnType("TEXT");
-
-                    b.Property<int?>("InventoryCardId")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<string>("LastError")
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("ListingId")
-                        .HasMaxLength(50)
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("OfferId")
-                        .HasMaxLength(50)
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("PaymentPolicyId")
-                        .HasColumnType("TEXT");
-
-                    b.Property<double>("Price")
-                        .HasColumnType("REAL");
-
-                    b.Property<double>("PromotionPercent")
-                        .HasColumnType("REAL");
-
-                    b.Property<DateTime?>("PublishedUtc")
-                        .HasColumnType("TEXT");
-
-                    b.Property<int>("Quantity")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<string>("ReturnPolicyId")
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("Sku")
-                        .IsRequired()
-                        .HasMaxLength(50)
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("Status")
-                        .IsRequired()
-                        .HasMaxLength(20)
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("StoreCategoryName")
-                        .HasMaxLength(100)
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("Title")
-                        .IsRequired()
-                        .HasMaxLength(80)
-                        .HasColumnType("TEXT");
-
-                    b.Property<DateTime>("UpdatedUtc")
-                        .HasColumnType("TEXT");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("InventoryCardId");
-
-                    b.HasIndex("Status");
-
-                    b.HasIndex("Environment", "Sku")
-                        .IsUnique();
-
-                    b.ToTable("EbayListings");
-                });
-
-            modelBuilder.Entity("CardTrader3000.Data.Entities.EbayListingImage", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("INTEGER");
-
-                    b.Property<int>("EbayListingId")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<string>("EbayUrl")
-                        .HasMaxLength(1000)
-                        .HasColumnType("TEXT");
-
-                    b.Property<DateTime?>("EbayUrlExpiresUtc")
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("LocalFileName")
-                        .HasMaxLength(100)
-                        .HasColumnType("TEXT");
-
-                    b.Property<int>("SortOrder")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<string>("SourceUrl")
-                        .HasMaxLength(1000)
-                        .HasColumnType("TEXT");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("EbayListingId");
-
-                    b.ToTable("EbayListingImages");
-                });
-
-            modelBuilder.Entity("CardTrader3000.Data.Entities.EbaySettings", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("INTEGER");
-
-                    b.Property<DateTime?>("AccessTokenExpiresUtc")
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("AccessTokenProtected")
-                        .HasColumnType("TEXT");
-
-                    b.Property<double>("BestOfferAutoAcceptPercent")
-                        .HasColumnType("REAL");
-
-                    b.Property<double>("BestOfferMinPercent")
-                        .HasColumnType("REAL");
-
-                    b.Property<DateTime?>("ConnectedUtc")
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("DefaultFulfillmentPolicyId")
-                        .HasMaxLength(50)
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("DefaultPaymentPolicyId")
-                        .HasMaxLength(50)
-                        .HasColumnType("TEXT");
-
-                    b.Property<double>("DefaultPromotionPercent")
-                        .HasColumnType("REAL");
-
-                    b.Property<string>("DefaultReturnPolicyId")
-                        .HasMaxLength(50)
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("Environment")
-                        .IsRequired()
-                        .HasMaxLength(20)
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("MerchantLocationKey")
-                        .HasMaxLength(36)
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("PromotionCampaignId")
-                        .HasMaxLength(50)
-                        .HasColumnType("TEXT");
-
-                    b.Property<DateTime?>("RefreshTokenExpiresUtc")
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("RefreshTokenProtected")
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("StoreCategories")
-                        .IsRequired()
-                        .HasMaxLength(2000)
-                        .HasColumnType("TEXT");
-
-                    b.Property<DateTime>("UpdatedUtc")
-                        .HasColumnType("TEXT");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("Environment")
-                        .IsUnique();
-
-                    b.ToTable("EbaySettings");
-                });
 
             modelBuilder.Entity("CardTrader3000.Data.Entities.ImportBatch", b =>
                 {
@@ -530,27 +315,6 @@ namespace CardTrader3000.Data.Migrations
                     b.ToTable("InventoryCards");
                 });
 
-            modelBuilder.Entity("CardTrader3000.Data.Entities.EbayListing", b =>
-                {
-                    b.HasOne("CardTrader3000.Data.Entities.InventoryCard", "InventoryCard")
-                        .WithMany()
-                        .HasForeignKey("InventoryCardId")
-                        .OnDelete(DeleteBehavior.SetNull);
-
-                    b.Navigation("InventoryCard");
-                });
-
-            modelBuilder.Entity("CardTrader3000.Data.Entities.EbayListingImage", b =>
-                {
-                    b.HasOne("CardTrader3000.Data.Entities.EbayListing", "EbayListing")
-                        .WithMany("Images")
-                        .HasForeignKey("EbayListingId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("EbayListing");
-                });
-
             modelBuilder.Entity("CardTrader3000.Data.Entities.ImportBatchItem", b =>
                 {
                     b.HasOne("CardTrader3000.Data.Entities.ImportBatch", "ImportBatch")
@@ -567,11 +331,6 @@ namespace CardTrader3000.Data.Migrations
                     b.Navigation("ImportBatch");
 
                     b.Navigation("InventoryCard");
-                });
-
-            modelBuilder.Entity("CardTrader3000.Data.Entities.EbayListing", b =>
-                {
-                    b.Navigation("Images");
                 });
 
             modelBuilder.Entity("CardTrader3000.Data.Entities.ImportBatch", b =>

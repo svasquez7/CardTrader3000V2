@@ -48,19 +48,19 @@ public sealed class ImportProcessor(
         await db.SaveChangesAsync(ct);
         Report(batch, done, total, pending.Count == 0 ? "Finalizing" : "Starting");
 
-        // ---- Track-only lines: inventory only, no AI cost ----
-        var trackOnly = pending.Where(i => i.SkipPricing).ToList();
-        if (trackOnly.Count > 0)
+        // ---- No-Claude lines: track only, or pricing supplied by the import file. No AI cost. ----
+        var noClaude = pending.Where(i => i.SkipPricing || i.PricingProvided).ToList();
+        if (noClaude.Count > 0)
         {
-            await MergeTrackOnlyAsync(db, trackOnly, ct);
+            await MergeWithoutClaudeAsync(db, noClaude, ct);
             await db.SaveChangesAsync(ct);
-            done += trackOnly.Count;
-            Report(batch, done, total, $"Added {trackOnly.Count} card(s) without pricing");
+            done += noClaude.Count;
+            Report(batch, done, total, $"Added {noClaude.Count} card(s) without calling Claude");
         }
 
         // ---- Re-price lines whose card was deleted after the batch was queued ----
         var toPrice = new List<ImportBatchItem>();
-        foreach (var item in pending.Where(i => !i.SkipPricing))
+        foreach (var item in pending.Where(i => !i.SkipPricing && !i.PricingProvided))
         {
             if (item.QuantityAdded == 0 && item.InventoryCardId is null)
             {
@@ -172,13 +172,16 @@ public sealed class ImportProcessor(
 
             ApplyEvaluation(card, ok, now);
 
+            // Values supplied in a JSON import win over Claude's (Claude fills in the rest).
+            ProvidedCardData.Deserialize(item.ProvidedDataJson)?.ApplyDetailsTo(card);
+
             item.InventoryCard = card;
             item.Status = ImportItemStatus.Succeeded;
             item.ErrorMessage = null;
             item.EstimatedListPrice = ok.Fees.ListPrice;
             item.MaxNetReturn = ok.Fees.MaxNetReturn;
             item.Bucket = ok.Fees.Bucket;
-            item.SgcCandidate = ok.SgcCandidate;
+            item.SgcCandidate = card.SgcCandidate; // includes a provided override
         }
 
         foreach (var failure in result.Failed)
@@ -190,10 +193,13 @@ public sealed class ImportProcessor(
     }
 
     /// <summary>
-    /// Track-only lines: increase the quantity of an existing card (its pricing is left as is), or
-    /// add a new card with no pricing. No Claude call, so no AI cost.
+    /// Lines that don't need Claude:
+    /// <list type="bullet">
+    /// <item>Track only: increase an existing card's quantity (its pricing is left as is) or add a new unpriced card.</item>
+    /// <item>Pricing provided by the import file: store that list price, recalculate fees in code, and apply the file's other data points.</item>
+    /// </list>
     /// </summary>
-    private async Task MergeTrackOnlyAsync(AppDbContext db, List<ImportBatchItem> items, CancellationToken ct)
+    private async Task MergeWithoutClaudeAsync(AppDbContext db, List<ImportBatchItem> items, CancellationToken ct)
     {
         var now = DateTime.UtcNow;
         var keys = items.Select(KeyOf).Distinct().ToList();
@@ -233,10 +239,37 @@ public sealed class ImportProcessor(
                 item.CreatedNewCard = true;
             }
 
+            var data = ProvidedCardData.Deserialize(item.ProvidedDataJson);
+            data?.ApplyDetailsTo(card);
+
+            if (item.PricingProvided && data?.ListPrice is { } listPrice)
+            {
+                var breakdown = fees.Calculate(listPrice);
+                ApplyPricing(card, breakdown, now);
+
+                item.EstimatedListPrice = breakdown.ListPrice;
+                item.MaxNetReturn = breakdown.MaxNetReturn;
+                item.Bucket = breakdown.Bucket;
+                item.SgcCandidate = card.SgcCandidate;
+            }
+
             item.InventoryCard = card;
             item.Status = ImportItemStatus.Succeeded;
             item.ErrorMessage = null;
         }
+    }
+
+    private static void ApplyPricing(InventoryCard card, FeeBreakdown b, DateTime now)
+    {
+        card.Bucket = b.Bucket;
+        card.EstimatedListPrice = b.ListPrice;
+        card.EbayFee = b.EbayFee;
+        card.PostageCost = b.PostageCost;
+        card.TotalFees = b.TotalFees;
+        card.MaxNetReturn = b.MaxNetReturn;
+        card.NetMarginPercent = b.NetMarginPercent;
+        card.LastPricedUtc = now;
+        card.UpdatedUtc = now;
     }
 
     /// <summary>Adds copies to a card. A re-price adds 0 and leaves stock alone.</summary>
@@ -318,11 +351,13 @@ public sealed class ImportProcessor(
         logger.LogInformation("Import batch {BatchId} {Status}: {Priced} priced, {Unpriced} track-only copies, {New} new, {Merged} merged, {Failed} failed, net {Net:C}",
             batch.Id, batch.Status, priced.Count, batch.UnpricedCardCount, batch.NewCardCount, batch.MergedCardCount, failed, batch.TotalMaxNetReturn);
 
+        var providedCount = priced.Count(i => i.PricingProvided);
+        var providedNote = providedCount > 0 ? $" ({providedCount} from your file)" : "";
         var trackOnlyNote = batch.UnpricedCardCount > 0 ? $", {batch.UnpricedCardCount} added without pricing" : "";
         var message = batch.Status switch
         {
-            ImportBatchStatus.Completed => $"Done: {priced.Count} card(s) priced{trackOnlyNote}",
-            ImportBatchStatus.CompletedWithErrors => $"Done with errors: {priced.Count} priced{trackOnlyNote}, {failed} failed",
+            ImportBatchStatus.Completed => $"Done: {priced.Count} card(s) priced{providedNote}{trackOnlyNote}",
+            ImportBatchStatus.CompletedWithErrors => $"Done with errors: {priced.Count} priced{providedNote}{trackOnlyNote}, {failed} failed",
             _ => $"Failed: {failed} card(s) could not be evaluated"
         };
         Report(batch, items.Count, items.Count, message);

@@ -30,7 +30,10 @@ public enum ImportSource
     Manual = 1,
 
     /// <summary>Existing inventory cards sent back through Claude from the Inventory page.</summary>
-    Reprice = 2
+    Reprice = 2,
+
+    /// <summary>JSON file with per-card data points (pricing and listing details optional).</summary>
+    Json = 3
 }
 
 public enum ImportBatchStatus

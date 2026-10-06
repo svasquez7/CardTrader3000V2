@@ -1,0 +1,13 @@
+<span class="badge @CssClass ms-2">@Status</span>
+
+@code {
+    [Parameter, EditorRequired] public EbayListingStatus Status { get; set; }
+
+    private string CssClass => Status switch
+    {
+        EbayListingStatus.Published => "badge-outline-success",
+        EbayListingStatus.Failed => "badge-outline-danger",
+        EbayListingStatus.Ended => "badge-outline-secondary",
+        _ => "badge-outline-warning"
+    };
+}

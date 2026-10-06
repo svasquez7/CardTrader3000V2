@@ -36,12 +36,34 @@
                             @onclick="() => SwitchMode(Mode.Manual)" disabled="@IsBusy">
                         <i class="mdi mdi-keyboard-outline me-1"></i>Manual entry
                     </button>
+                    <button type="button" class="btn @(_mode == Mode.Json ? "btn-primary" : "btn-outline-secondary")"
+                            @onclick="() => SwitchMode(Mode.Json)" disabled="@IsBusy">
+                        <i class="mdi mdi-code-json me-1"></i>JSON file
+                    </button>
                 </div>
 
                 @if (_mode == Mode.Csv)
                 {
                     <InputFile class="form-control mb-2" accept=".csv,.txt,text/csv" OnChange="OnFileSelectedAsync" disabled="@IsBusy" />
                     <small class="text-muted d-block mb-3">Up to @(ImportService.MaxFileBytes / 1024 / 1024) MB and @CardLineParser.MaxLines.ToString("N0") lines. A header row is detected and skipped.</small>
+                }
+                else if (_mode == Mode.Json)
+                {
+                    <InputFile class="form-control mb-2" accept=".json,application/json" OnChange="OnJsonFileSelectedAsync" disabled="@IsBusy" />
+                    <small class="text-muted d-block mb-2">
+                        Up to @(ImportService.MaxFileBytes / 1024 / 1024) MB and @JsonCardParser.MaxCards.ToString("N0") cards.
+                        Cards with a list price are imported as-is, with no Claude call. The rest are priced or tracked per the setting below.
+                    </small>
+                    <details class="mb-3">
+                        <summary class="text-muted small">JSON format</summary>
+                        <p class="text-muted small mt-2 mb-1">
+                            An array of cards, or <code>{ "cards": [ ... ] }</code>. The Phase 1 prompt's output is accepted as-is.
+                            Only <code>card_set</code>, <code>player</code> and <code>card_number</code> are required.
+                            Fee, net, margin and bucket fields are ignored and recalculated from the list price.
+                            Field names can be snake_case or camelCase.
+                        </p>
+                        <pre class="small text-muted border border-secondary rounded p-2 mb-0" style="white-space: pre-wrap">@JsonExample</pre>
+                    </details>
                 }
                 else
                 {
@@ -88,8 +110,12 @@
                     <div class="d-flex flex-wrap gap-4 mb-3">
                         <div><h4 class="mb-0">@_preview.Lines.Count</h4><small class="text-muted">valid lines</small></div>
                         <div><h4 class="mb-0">@distinct.Count</h4><small class="text-muted">distinct cards</small></div>
-                        <div><h4 class="mb-0 text-success">@distinct.Count(d => d.Price)</h4><small class="text-muted">to price</small></div>
-                        <div><h4 class="mb-0">@distinct.Count(d => !d.Price)</h4><small class="text-muted">track only</small></div>
+                        @if (distinct.Any(HasProvidedPrice))
+                        {
+                            <div><h4 class="mb-0 text-info">@distinct.Count(HasProvidedPrice)</h4><small class="text-muted">priced in file</small></div>
+                        }
+                        <div><h4 class="mb-0 text-success">@distinct.Count(d => d.Price && !HasProvidedPrice(d))</h4><small class="text-muted">to price with Claude</small></div>
+                        <div><h4 class="mb-0">@distinct.Count(d => !d.Price && !HasProvidedPrice(d))</h4><small class="text-muted">track only</small></div>
                         <div><h4 class="mb-0 @(_preview.Errors.Count > 0 ? "text-warning" : "")">@_preview.Errors.Count</h4><small class="text-muted">skipped</small></div>
                     </div>
 
@@ -98,7 +124,7 @@
                         <div class="alert alert-warning py-2 small">
                             @foreach (var e in _preview.Errors.Take(8))
                             {
-                                <div>Line @e.LineNumber: @e.Message</div>
+                                <div>@(_mode == Mode.Json ? "Card" : "Line") @e.LineNumber: @e.Message</div>
                             }
                             @if (_preview.Errors.Count > 8) { <div>…and @(_preview.Errors.Count - 8) more</div> }
                         </div>
@@ -119,7 +145,11 @@
                                         <td>@d.First.Parallel</td>
                                         <td class="text-end">@d.Quantity</td>
                                         <td>
-                                            @if (d.Price)
+                                            @if (d.First.Data?.ListPrice is { } filePrice)
+                                            {
+                                                <span class="text-info" title="Price from your file, no Claude call">@filePrice.ToString("C")</span>
+                                            }
+                                            else if (d.Price)
                                             {
                                                 <i class="mdi mdi-robot-outline text-success" title="Will be priced by Claude"></i>
                                             }
@@ -171,7 +201,7 @@
                     {
                         <div class="row mt-2">
                             <SummaryTile Label="Cards priced" Value="@_summary.TotalCardsEvaluated.ToString("N0")"
-                                         Note="@(_summary.UnpricedCardCount > 0 ? $"+ {_summary.UnpricedCardCount} track only" : null)" />
+                                         Note="@SummaryNote" />
                             <SummaryTile Label="New / merged" Value="@($"{_summary.NewCardCount} / {_summary.MergedCardCount}")" />
                             <SummaryTile Label="Bucket 1 / 2" Value="@($"{_summary.Bucket1Count} / {_summary.Bucket2Count}")" />
                             <SummaryTile Label="Gross revenue" Value="@_summary.TotalGrossRevenue.ToString("C")" />
@@ -216,13 +246,16 @@
 }
 
 @code {
-    private enum Mode { Csv, Manual }
+    private enum Mode { Csv, Manual, Json }
     private const int PreviewRows = 10;
 
     private Mode _mode = Mode.Csv;
     private string _manualText = "";
     private string? _csvText;
     private string? _csvFileName;
+    private string? _jsonText;
+    private string? _jsonFileName;
+    private int _providedCount;
     private ParseResult? _preview;
     private string? _submitError;
     private bool _submitting;
@@ -235,13 +268,21 @@
     private bool IsBusy => _submitting || _progress is { IsFinished: false };
     private bool _priceByDefault = true;
 
-    private string PriceDefaultHint => _priceByDefault
-        ? "Lines without a price column are priced. Add \", false\" to a line to skip it."
-        : "Lines without a price column are only added to inventory. Add \", true\" to a line to price it.";
+    private string PriceDefaultHint => (_mode, _priceByDefault) switch
+    {
+        (Mode.Json, true) => "Cards without a list price are priced by Claude. Add \"price_with_claude\": false to a card to skip it.",
+        (Mode.Json, false) => "Cards without a list price are only added to inventory. Add \"price_with_claude\": true to a card to price it.",
+        (_, true) => "Lines without a price column are priced. Add \", false\" to a line to skip it.",
+        _ => "Lines without a price column are only added to inventory. Add \", true\" to a line to price it."
+    };
+
+    private static bool HasProvidedPrice(DistinctCardLine d) => d.First.Data?.ListPrice is not null;
+
+    private static string JsonExample => JsonCardParser.Example;
 
     private bool CanSubmit => !IsBusy && _preview is { Lines.Count: > 0 };
 
-    private int PricedCount => _preview?.Distinct().Count(d => d.Price) ?? 0;
+    private int PricedCount => _preview?.Distinct().Count(d => d.Price && !HasProvidedPrice(d)) ?? 0;
 
     private string SubmitLabel
     {
@@ -249,22 +290,28 @@
         {
             if (_preview is null || _preview.Lines.Count == 0) return "Evaluate & add";
             var distinct = _preview.Distinct();
-            var price = distinct.Count(d => d.Price);
-            var track = distinct.Count - price;
-            return (price, track) switch
-            {
-                (0, _) => $"Add {track} card(s) without pricing",
-                (_, 0) => $"Price & add {price} card(s)",
-                _ => $"Price {price} & add {track} without pricing"
-            };
+            var provided = distinct.Count(HasProvidedPrice);
+            var claude = distinct.Count(d => d.Price && !HasProvidedPrice(d));
+            var track = distinct.Count - provided - claude;
+
+            var parts = new List<string>(3);
+            if (provided > 0) parts.Add($"import {provided} with your pricing");
+            if (claude > 0) parts.Add($"price {claude} with Claude");
+            if (track > 0) parts.Add($"add {track} without pricing");
+
+            var label = string.Join(", ", parts);
+            return char.ToUpperInvariant(label[0]) + label[1..];
         }
     }
 
     private void RefreshPreview()
     {
-        _preview = _mode == Mode.Csv
-            ? (_csvText is null ? null : Imports.Preview(_csvText, _priceByDefault))
-            : Imports.Preview(_manualText, _priceByDefault);
+        _preview = _mode switch
+        {
+            Mode.Csv => _csvText is null ? null : Imports.Preview(_csvText, _priceByDefault),
+            Mode.Json => _jsonText is null ? null : Imports.PreviewJson(_jsonText, _priceByDefault),
+            _ => Imports.Preview(_manualText, _priceByDefault)
+        };
     }
 
     private string ManualText
@@ -324,15 +371,37 @@
         }
     }
 
+    private async Task OnJsonFileSelectedAsync(InputFileChangeEventArgs e)
+    {
+        _submitError = null;
+        try
+        {
+            await using var stream = e.File.OpenReadStream(ImportService.MaxFileBytes);
+            using var reader = new StreamReader(stream);
+            _jsonText = await reader.ReadToEndAsync();
+            _jsonFileName = e.File.Name;
+            _preview = Imports.PreviewJson(_jsonText, _priceByDefault);
+        }
+        catch (IOException)
+        {
+            _jsonText = null;
+            _preview = null;
+            _submitError = $"File is larger than {ImportService.MaxFileBytes / 1024 / 1024} MB.";
+        }
+    }
+
     private async Task SubmitAsync()
     {
         _submitError = null;
         _submitting = true;
         try
         {
-            var result = _mode == Mode.Csv
-                ? await Imports.SubmitCsvAsync(_csvText ?? "", _csvFileName ?? "upload.csv", _priceByDefault)
-                : await Imports.SubmitManualAsync(_manualText, _priceByDefault);
+            var result = _mode switch
+            {
+                Mode.Csv => await Imports.SubmitCsvAsync(_csvText ?? "", _csvFileName ?? "upload.csv", _priceByDefault),
+                Mode.Json => await Imports.SubmitJsonAsync(_jsonText ?? "", _jsonFileName ?? "upload.json", _priceByDefault),
+                _ => await Imports.SubmitManualAsync(_manualText, _priceByDefault)
+            };
 
             if (!result.Accepted)
             {
@@ -349,6 +418,8 @@
             _manualText = "";
             _csvText = null;
             _csvFileName = null;
+            _jsonText = null;
+            _jsonFileName = null;
             _preview = null;
         }
         catch (Exception ex)
@@ -394,6 +465,20 @@
             .Where(i => i.ImportBatchId == _batchId && i.Status == ImportItemStatus.Failed)
             .OrderBy(i => i.LineNumber)
             .ToListAsync();
+        _providedCount = await db.ImportBatchItems
+            .CountAsync(i => i.ImportBatchId == _batchId && i.PricingProvided && i.Status == ImportItemStatus.Succeeded);
+    }
+
+    private string? SummaryNote
+    {
+        get
+        {
+            if (_summary is null) return null;
+            var parts = new List<string>(2);
+            if (_providedCount > 0) parts.Add($"{_providedCount} from your file");
+            if (_summary.UnpricedCardCount > 0) parts.Add($"+ {_summary.UnpricedCardCount} track only");
+            return parts.Count == 0 ? null : string.Join(" · ", parts);
+        }
     }
 
     private static bool IsDone(ImportBatchStatus s) =>

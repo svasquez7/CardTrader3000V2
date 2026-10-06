@@ -1,0 +1,500 @@
+@page "/listings/{Id:int}"
+@using CardTrader3000.Services.Ebay
+@using Microsoft.Extensions.Options
+@inject EbayListingService Listings
+@inject EbayApiClient Api
+@inject IOptions<EbayOptions> EbayOpts
+@inject NavigationManager Nav
+@inject CardTrader3000.Services.Pricing.FeeCalculator Fees
+
+<PageTitle>eBay listing · CardTrader3000</PageTitle>
+
+@if (_listing is null)
+{
+    <div class="card"><div class="card-body text-muted">@(_loaded ? "Listing not found." : "Loading…")</div></div>
+    return;
+}
+
+<div class="page-header">
+    <h3 class="page-title">
+        <a href="listings" class="text-muted me-2"><i class="mdi mdi-arrow-left"></i></a>
+        eBay listing
+        <ListingStatusBadge Status="_listing.Status" />
+        <span class="badge badge-outline-secondary ms-1">@_listing.Environment</span>
+    </h3>
+    <div class="d-flex gap-2">
+        @if (_listing.ListingId is not null && _listing.Status == EbayListingStatus.Published)
+        {
+            <a class="btn btn-outline-info" href="@EbayOpts.Value.ListingUrl(_listing.ListingId)" target="_blank" rel="noopener">
+                <i class="mdi mdi-open-in-new me-1"></i>View on eBay
+            </a>
+        }
+    </div>
+</div>
+
+@* ---------- Messages ---------- *@
+@if (_progress is not null)
+{
+    <div class="alert alert-info"><i class="mdi mdi-loading mdi-spin me-1"></i>@_progress</div>
+}
+@if (_result is not null)
+{
+    <div class="alert @(_result.Success ? "alert-success" : "alert-danger")">
+        @_result.Message
+        @if (_result.ListingUrl is not null)
+        {
+            <a href="@_result.ListingUrl" target="_blank" rel="noopener" class="ms-2">Open listing</a>
+        }
+    </div>
+}
+@if (_errors.Count > 0 || _warnings.Count > 0)
+{
+    <div class="alert @(_errors.Count > 0 ? "alert-danger" : "alert-warning") py-2">
+        @foreach (var e in _errors) { <div><i class="mdi mdi-alert-circle-outline me-1"></i>@e</div> }
+        @foreach (var w in _warnings) { <div><i class="mdi mdi-alert-outline me-1"></i>@w</div> }
+    </div>
+}
+@if (!string.IsNullOrEmpty(_listing.LastError) && _result is null)
+{
+    <div class="alert alert-warning py-2"><strong>Last attempt:</strong> @_listing.LastError</div>
+}
+@if (_policyLoadError is not null)
+{
+    <div class="alert alert-warning py-2 small">Couldn't load your eBay policies: @_policyLoadError <a href="ebay">eBay Settings</a></div>
+}
+
+<div class="row">
+    @* ================= Left: listing details ================= *@
+    <div class="col-xl-8 grid-margin">
+        <div class="card mb-4">
+            <div class="card-body">
+                @if (_listing.InventoryCard is { } card)
+                {
+                    <p class="text-muted small mb-3">
+                        From inventory: <a href="inventory?card=@card.Id">@card.PlayerName · @card.CardSet #@card.CardNumber</a>
+                        · @card.Quantity in stock · SKU @_listing.Sku
+                    </p>
+                }
+
+                <div class="d-flex justify-content-between">
+                    <label class="form-label small text-muted">Title</label>
+                    <small class="@(_listing.Title.Length > 80 ? "text-danger" : "text-muted")">@_listing.Title.Length/80</small>
+                </div>
+                <input class="form-control mb-3" maxlength="80" @bind="_listing.Title" @bind:event="oninput" />
+
+                <div class="row g-3 mb-3">
+                    <div class="col-md-3">
+                        <label class="form-label small text-muted">Buy It Now price ($)</label>
+                        <input type="number" step="0.01" min="0" class="form-control" @bind="_listing.Price" />
+                        @if (_listing.InventoryCard is { IsPriced: true } priced && priced.EstimatedListPrice != _listing.Price)
+                        {
+                            <small class="text-muted">Estimate: @priced.EstimatedListPrice.ToString("C")</small>
+                        }
+                    </div>
+                    <div class="col-md-2">
+                        <label class="form-label small text-muted">Quantity</label>
+                        <input type="number" min="1" class="form-control" @bind="_listing.Quantity" />
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label small text-muted">Condition (Ungraded)</label>
+                        <select class="form-select" @bind="_listing.CardConditionValueId">
+                            @foreach (var (id, label) in CardConditions)
+                            {
+                                <option value="@id">@label</option>
+                            }
+                        </select>
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label small text-muted">Store category</label>
+                        <select class="form-select" @bind="_listing.StoreCategoryName">
+                            <option value="">(none)</option>
+                            @foreach (var category in _storeCategories)
+                            {
+                                <option value="@category">@category</option>
+                            }
+                            @if (!string.IsNullOrEmpty(_listing.StoreCategoryName) && !_storeCategories.Contains(_listing.StoreCategoryName))
+                            {
+                                <option value="@_listing.StoreCategoryName">@_listing.StoreCategoryName</option>
+                            }
+                        </select>
+                        <small class="text-muted">Buy It Now · GTC</small>
+                    </div>
+                </div>
+
+                @* ---- Best Offer + promotion ---- *@
+                <div class="row g-3 mb-3">
+                    <div class="col-md-3">
+                        <label class="form-label small text-muted">Best Offer minimum %</label>
+                        <input type="number" step="1" min="1" max="99" class="form-control" @bind="_listing.BestOfferMinPercent" />
+                        <small class="text-muted">Auto-decline below @Offer.AutoDecline.ToString("C")</small>
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label small text-muted">Auto-accept %</label>
+                        <input type="number" step="1" min="1" max="99" class="form-control" @bind="_listing.BestOfferAutoAcceptPercent" />
+                        <small class="text-muted">Auto-accept at @Offer.AutoAccept.ToString("C")+</small>
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label small text-muted">Promotion ad rate %</label>
+                        <input type="number" step="0.1" min="0" max="100" class="form-control" @bind="_listing.PromotionPercent" />
+                        <small class="text-muted">
+                            @(_listing.PromotionPercent > 0 ? $"General · {AdFee:C} per sale" : "Not promoted")
+                        </small>
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label small text-muted">Est. net after fees + ad</label>
+                        <input class="form-control" value="@EstimatedNet.ToString("C")" disabled />
+                        <small class="@(Shipping.FromName ? "text-muted" : "text-warning")" title="@Shipping.Note">@ShippingSummary</small>
+                    </div>
+                </div>
+
+                <label class="form-label small text-muted">Description</label>
+                <textarea class="form-control mb-1" rows="10" @bind="_listing.Description" @bind:event="oninput"></textarea>
+                <small class="text-muted">Plain text. Line breaks are kept on eBay.</small>
+            </div>
+        </div>
+
+        @* ---- Item specifics ---- *@
+        <div class="card">
+            <div class="card-body">
+                <div class="d-flex justify-content-between align-items-center mb-2">
+                    <h4 class="card-title mb-0">Item specifics</h4>
+                    <button class="btn btn-sm btn-outline-secondary" @onclick="AddAspect"><i class="mdi mdi-plus"></i> Add</button>
+                </div>
+                <p class="text-muted small">Pre-filled from the card. eBay will say if a required specific is missing when you publish.</p>
+                <datalist id="ct-sport-options">
+                    @foreach (var sportValue in CardAspects.SportValues)
+                    {
+                        <option value="@sportValue"></option>
+                    }
+                </datalist>
+                @foreach (var row in _aspects)
+                {
+                    <div class="row g-2 mb-2">
+                        <div class="col-5"><input class="form-control form-control-sm" maxlength="@CardAspects.MaxNameLength" placeholder="Name" @bind="row.Name" /></div>
+                        <div class="col-6">
+                            @if (row.Name.Equals("Sport", StringComparison.OrdinalIgnoreCase))
+                            {
+                                @* Free text with suggestions: pick a common sport or type any other (e.g. Golf, Wrestling). *@
+                                <input class="form-control form-control-sm @(string.IsNullOrWhiteSpace(row.Value) ? "border-danger" : "")"
+                                       list="ct-sport-options" maxlength="@CardAspects.MaxValueLength"
+                                       placeholder="Required: pick or type a sport" @bind="row.Value" @bind:event="oninput" />
+                            }
+                            else
+                            {
+                                <input class="form-control form-control-sm" maxlength="@CardAspects.MaxValueLength" placeholder="Value" @bind="row.Value" />
+                            }
+                        </div>
+                        <div class="col-1 text-end">
+                            <button class="btn btn-sm btn-outline-danger" title="Remove" @onclick="() => _aspects.Remove(row)"><i class="mdi mdi-close"></i></button>
+                        </div>
+                    </div>
+                }
+            </div>
+        </div>
+    </div>
+
+    @* ================= Right: photos, policies, actions ================= *@
+    <div class="col-xl-4 grid-margin">
+        <div class="card mb-4">
+            <div class="card-body">
+                <h4 class="card-title">Photos <small class="text-muted">(@_listing.Images.Count/@ListingImageStore.MaxImagesPerListing)</small></h4>
+                <p class="text-muted small">The first photo is the main (gallery) image.</p>
+
+                <div class="row g-2 mb-3">
+                    @for (var i = 0; i < _listing.Images.Count; i++)
+                    {
+                        var img = _listing.Images[i];
+                        var index = i;
+                        <div class="col-4">
+                            <div class="border border-secondary rounded p-1 text-center @(index == 0 ? "border-primary" : "")">
+                                <img src="@ImageSrc(img)" alt="Photo @(index + 1)" style="width:100%;height:90px;object-fit:contain" />
+                                <div class="d-flex justify-content-between mt-1">
+                                    <button class="btn btn-sm p-0 text-muted" title="Move left" disabled="@(index == 0 || _busy)" @onclick="() => MoveImageAsync(img.Id, -1)"><i class="mdi mdi-chevron-left"></i></button>
+                                    <button class="btn btn-sm p-0 text-danger" title="Remove" disabled="@_busy" @onclick="() => RemoveImageAsync(img.Id)"><i class="mdi mdi-delete-outline"></i></button>
+                                    <button class="btn btn-sm p-0 text-muted" title="Move right" disabled="@(index == _listing.Images.Count - 1 || _busy)" @onclick="() => MoveImageAsync(img.Id, 1)"><i class="mdi mdi-chevron-right"></i></button>
+                                </div>
+                            </div>
+                        </div>
+                    }
+                </div>
+
+                <InputFile class="form-control form-control-sm mb-2" multiple accept="@ListingImageStore.AcceptAttribute" OnChange="UploadAsync" disabled="@_busy" />
+                <div class="input-group input-group-sm">
+                    <input class="form-control" placeholder="…or paste an https:// image URL" @bind="_imageUrl" />
+                    <button class="btn btn-outline-secondary" @onclick="AddImageUrlAsync" disabled="@(_busy || string.IsNullOrWhiteSpace(_imageUrl))">Add</button>
+                </div>
+                <small class="text-muted d-block mt-1">Uploaded photos go to eBay's picture hosting when you publish. Up to 12 MB each.</small>
+            </div>
+        </div>
+
+        <div class="card mb-4">
+            <div class="card-body">
+                <h4 class="card-title">Policies</h4>
+                <PolicySelect Label="Shipping" Policies="_fulfillment" @bind-Value="_listing.FulfillmentPolicyId" />
+                <PolicySelect Label="Returns" Policies="_returns" @bind-Value="_listing.ReturnPolicyId" />
+                <PolicySelect Label="Payment" Policies="_payments" @bind-Value="_listing.PaymentPolicyId" />
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-body d-grid gap-2">
+                <button class="btn btn-success btn-lg" @onclick="PublishAsync" disabled="@_busy">
+                    <i class="mdi mdi-upload me-1"></i>@(_listing.Status == EbayListingStatus.Published ? "Update listing on eBay" : "Publish to eBay")
+                </button>
+                <button class="btn btn-outline-primary" @onclick="SaveAsync" disabled="@_busy">
+                    <i class="mdi mdi-content-save me-1"></i>Save draft
+                </button>
+                @if (_listing.Status == EbayListingStatus.Published)
+                {
+                    @if (_confirmEnd)
+                    {
+                        <div class="d-flex gap-2">
+                            <button class="btn btn-danger flex-fill" @onclick="EndAsync" disabled="@_busy">Yes, end listing</button>
+                            <button class="btn btn-outline-secondary" @onclick="() => _confirmEnd = false">Cancel</button>
+                        </div>
+                    }
+                    else
+                    {
+                        <button class="btn btn-outline-danger" @onclick="() => _confirmEnd = true" disabled="@_busy">End listing</button>
+                    }
+                }
+                else if (_confirmDelete)
+                {
+                    <div class="d-flex gap-2">
+                        <button class="btn btn-danger flex-fill" @onclick="DeleteAsync" disabled="@_busy">Yes, delete draft</button>
+                        <button class="btn btn-outline-secondary" @onclick="() => _confirmDelete = false">Cancel</button>
+                    </div>
+                }
+                else
+                {
+                    <button class="btn btn-outline-danger" @onclick="() => _confirmDelete = true" disabled="@_busy">Delete draft</button>
+                }
+            </div>
+        </div>
+    </div>
+</div>
+
+@code {
+    [Parameter] public int Id { get; set; }
+
+    private sealed class AspectRow
+    {
+        public string Name { get; set; } = "";
+        public string Value { get; set; } = "";
+    }
+
+    private static readonly (string Id, string Label)[] CardConditions =
+    [
+        ("400010", "Near Mint or Better"),
+        ("400011", "Excellent"),
+        ("400012", "Very Good"),
+        ("400013", "Poor")
+    ];
+
+    private EbayListing? _listing;
+    private bool _loaded;
+    private List<AspectRow> _aspects = [];
+    private List<EbayPolicy> _fulfillment = [];
+    private List<EbayPolicy> _returns = [];
+    private List<EbayPolicy> _payments = [];
+    private string? _policyLoadError;
+    private List<string> _storeCategories = [];
+
+    private string _imageUrl = "";
+    private bool _busy;
+    private bool _confirmEnd;
+    private bool _confirmDelete;
+    private string? _progress;
+    private PublishResult? _result;
+    private List<string> _errors = [];
+    private List<string> _warnings = [];
+
+    private (decimal AutoDecline, decimal AutoAccept) Offer =>
+        EbayListingService.BestOfferAmounts(_listing!.Price, _listing.BestOfferMinPercent, _listing.BestOfferAutoAcceptPercent);
+
+    /// <summary>Buyer's shipping charge, from the selected shipping policy's name.</summary>
+    private ShippingCharge Shipping =>
+        ListingEconomics.ParseShipping(_fulfillment.FirstOrDefault(p => p.Id == _listing!.FulfillmentPolicyId)?.Name);
+
+    /// <summary>Same calculation as the eBay Listings page (see ListingEconomics).</summary>
+    private ListingEstimate Estimate =>
+        ListingEconomics.Estimate(_listing!.Price, Shipping.Amount, _listing.PromotionPercent, Fees.Rates);
+
+    private decimal AdFee => Estimate.AdFee;
+    private decimal EstimatedNet => Estimate.Net;
+
+    private string ShippingSummary
+    {
+        get
+        {
+            var s = Shipping;
+            var r = Fees.Rates;
+            var charged = s.Amount == 0 ? "free shipping" : $"{s.Amount:C} shipping";
+            var basis = $"{r.FinalValueFeeRate * 100m:0.##}% + {r.FixedOrderFee:C} · {r.StandardEnvelopeRate:C} envelope";
+            return s.FromName ? $"{charged} · {basis}" : $"{charged} (assumed) · {basis}";
+        }
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        _storeCategories = (await Listings.GetSettingsAsync()).StoreCategoryList;
+        await LoadAsync();
+        await LoadPoliciesAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        _listing = await Listings.GetAsync(Id);
+        _loaded = true;
+        if (_listing is null) return;
+
+        _aspects = CardAspects.Deserialize(_listing.AspectsJson)
+            .Select(kv => new AspectRow { Name = kv.Key, Value = string.Join(", ", kv.Value) })
+            .ToList();
+
+        // Sport is required by eBay. Drafts made before team-based detection may lack it:
+        // add the row (filled in when the card's team gives it away) so it's visible up top.
+        if (!_aspects.Any(a => a.Name.Equals("Sport", StringComparison.OrdinalIgnoreCase)))
+        {
+            var inferred = _listing.InventoryCard is { } card ? CardAspects.InferSport(card) : null;
+            _aspects.Insert(0, new AspectRow { Name = "Sport", Value = inferred?.Sport ?? "" });
+        }
+    }
+
+    private async Task LoadPoliciesAsync()
+    {
+        try
+        {
+            _fulfillment = await Api.GetFulfillmentPoliciesAsync();
+            _returns = await Api.GetReturnPoliciesAsync();
+            _payments = await Api.GetPaymentPoliciesAsync();
+            _policyLoadError = null;
+        }
+        catch (EbayApiException ex)
+        {
+            _policyLoadError = ex.Message;
+        }
+    }
+
+    private void AddAspect() => _aspects.Add(new AspectRow());
+
+    private string ImageSrc(EbayListingImage img) =>
+        img.SourceUrl ?? (img.LocalFileName is not null ? $"listing-images/{_listing!.Id}/{img.LocalFileName}" : img.EbayUrl ?? "");
+
+    /// <summary>Copies the item-specifics rows back into the listing.</summary>
+    private void ApplyAspects()
+    {
+        var dict = new Dictionary<string, List<string>>();
+        foreach (var row in _aspects)
+        {
+            var name = row.Name.Trim();
+            var value = row.Value.Trim();
+            if (name.Length == 0 || value.Length == 0) continue;
+            if (name.Length > CardAspects.MaxNameLength) name = name[..CardAspects.MaxNameLength];
+
+            // "A, B" in one row becomes two values (e.g. Features: Rookie, Short Print).
+            dict[name] = value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Select(v => v.Length > CardAspects.MaxValueLength ? v[..CardAspects.MaxValueLength] : v)
+                .ToList();
+        }
+        _listing!.AspectsJson = CardAspects.Serialize(dict);
+    }
+
+    private async Task SaveCoreAsync()
+    {
+        ApplyAspects();
+        await Listings.SaveAsync(_listing!);
+    }
+
+    private Task SaveAsync() => RunAsync(async () =>
+    {
+        await SaveCoreAsync();
+        await LoadAsync();
+        (_errors, _warnings) = await Listings.ValidateAsync(_listing!);
+        _result = new PublishResult(true, _errors.Count == 0 ? "Draft saved. Ready to publish." : "Draft saved.", null, []);
+    });
+
+    private Task PublishAsync() => RunAsync(async () =>
+    {
+        await SaveCoreAsync();
+        var progress = new Progress<string>(text => { _progress = text; StateHasChanged(); });
+        _result = await Listings.PublishAsync(Id, progress);
+        _progress = null;
+        _warnings = _result.Warnings.ToList();
+        await LoadAsync();
+    });
+
+    private Task EndAsync() => RunAsync(async () =>
+    {
+        _confirmEnd = false;
+        _result = await Listings.EndAsync(Id);
+        await LoadAsync();
+    });
+
+    private Task DeleteAsync() => RunAsync(async () =>
+    {
+        await Listings.DeleteAsync(Id);
+        Nav.NavigateTo("listings");
+    });
+
+    private Task UploadAsync(InputFileChangeEventArgs e) => RunAsync(async () =>
+    {
+        await SaveCoreAsync(); // keep unsaved edits; the reload below would otherwise drop them
+        var problems = new List<string>();
+        foreach (var file in e.GetMultipleFiles(ListingImageStore.MaxImagesPerListing))
+        {
+            if (!ListingImageStore.IsSupported(file.Name)) { problems.Add($"{file.Name}: unsupported type."); continue; }
+            try
+            {
+                await using var stream = file.OpenReadStream(ListingImageStore.MaxBytes);
+                await Listings.AddUploadedImageAsync(Id, stream, file.Name);
+            }
+            catch (IOException) { problems.Add($"{file.Name}: larger than 12 MB."); }
+            catch (InvalidOperationException ex) { problems.Add(ex.Message); break; }
+        }
+        await LoadAsync();
+        if (problems.Count > 0) _result = new PublishResult(false, string.Join(" ", problems), null, []);
+    });
+
+    private Task AddImageUrlAsync() => RunAsync(async () =>
+    {
+        await SaveCoreAsync();
+        await Listings.AddImageUrlAsync(Id, _imageUrl);
+        _imageUrl = "";
+        await LoadAsync();
+    });
+
+    private Task RemoveImageAsync(int imageId) => RunAsync(async () =>
+    {
+        await SaveCoreAsync();
+        await Listings.RemoveImageAsync(imageId);
+        await LoadAsync();
+    });
+
+    private Task MoveImageAsync(int imageId, int direction) => RunAsync(async () =>
+    {
+        await SaveCoreAsync();
+        await Listings.MoveImageAsync(imageId, direction);
+        await LoadAsync();
+    });
+
+    private async Task RunAsync(Func<Task> action)
+    {
+        _busy = true;
+        _result = null;
+        _errors = [];
+        try
+        {
+            await action();
+        }
+        catch (Exception ex) when (ex is EbayApiException or InvalidOperationException)
+        {
+            _result = new PublishResult(false, ex.Message, null, []);
+        }
+        finally
+        {
+            _busy = false;
+            _progress = null;
+        }
+    }
+}

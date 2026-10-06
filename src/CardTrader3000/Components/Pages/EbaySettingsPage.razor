@@ -1,0 +1,373 @@
+@page "/ebay"
+@using CardTrader3000.Services.Ebay
+@using Microsoft.Extensions.Options
+@inject EbayAuthService Auth
+@inject EbayApiClient Api
+@inject EbayListingService Listings
+@inject IOptions<EbayOptions> EbayOpts
+@inject NavigationManager Nav
+
+<PageTitle>eBay Settings · CardTrader3000</PageTitle>
+
+<div class="page-header">
+    <h3 class="page-title">eBay Settings</h3>
+    <span class="badge @(Opt.Environment == EbayEnvironment.Sandbox ? "badge-outline-warning" : "badge-outline-success")">
+        @Opt.Environment
+    </span>
+</div>
+
+@if (Connected == 1)
+{
+    <div class="alert alert-success">Connected to eBay.</div>
+}
+@if (!string.IsNullOrEmpty(Error))
+{
+    <div class="alert alert-danger">@Error</div>
+}
+@if (_message is not null)
+{
+    <div class="alert @(_messageIsError ? "alert-danger" : "alert-success")">@_message</div>
+}
+
+@* ---------- Redirect URLs (always shown) ---------- *@
+<div class="card grid-margin">
+    <div class="card-body">
+        <h4 class="card-title mb-1">Redirect URLs for your RuName</h4>
+        <p class="text-muted small mb-3">
+            In the eBay developer portal under <strong>User Tokens → Get a Token from eBay via Your Application</strong>,
+            set these on your eBay Redirect URL (RuName). They must match this app's address exactly.
+        </p>
+
+        <div class="mb-2">
+            <label class="form-label small text-muted mb-1">Auth accepted URL</label>
+            <div class="input-group">
+                <input class="form-control" value="@CallbackUrl" readonly />
+                <CopyButton Text="@CallbackUrl" Label="Copy" />
+            </div>
+        </div>
+        <div class="mb-2">
+            <label class="form-label small text-muted mb-1">Auth declined URL</label>
+            <div class="input-group">
+                <input class="form-control" value="@DeclinedUrl" readonly />
+                <CopyButton Text="@DeclinedUrl" Label="Copy" />
+            </div>
+        </div>
+
+        <small class="text-muted d-block">
+            RuName in use: @(string.IsNullOrWhiteSpace(Opt.RuName) ? "not set" : Opt.RuName)
+            · Environment: @Opt.Environment
+        </small>
+        @if (!Nav.BaseUri.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+        {
+            <small class="text-warning d-block mt-1">
+                You're using http. eBay requires https redirect URLs, so open the app on its https address (e.g. https://localhost:7243).
+            </small>
+        }
+    </div>
+</div>
+
+@if (!Opt.IsConfigured)
+{
+    <div class="card grid-margin">
+        <div class="card-body">
+            <h4 class="card-title">Set up your eBay developer keys</h4>
+            <ol class="text-muted mb-0">
+                <li>In the eBay developer portal, open your <strong>Sandbox</strong> keyset and copy the App ID and Cert ID.</li>
+                <li>Under <strong>User Tokens → Get a Token from eBay via Your Application</strong>, add an eBay Redirect URL (RuName)
+                    using the two redirect URLs above.</li>
+                <li>From the project folder run:
+                    <pre class="mt-2 mb-0 small">dotnet user-secrets set "Ebay:ClientId" "your-app-id"
+dotnet user-secrets set "Ebay:ClientSecret" "your-cert-id"
+dotnet user-secrets set "Ebay:RuName" "your-runame"</pre>
+                </li>
+                <li>Restart the app and come back here.</li>
+            </ol>
+        </div>
+    </div>
+    return;
+}
+
+@* ---------- Connection ---------- *@
+<div class="card grid-margin">
+    <div class="card-body d-flex flex-wrap justify-content-between align-items-center gap-3">
+        <div>
+            <h4 class="card-title mb-1">eBay account</h4>
+            @if (IsConnected)
+            {
+                <span class="text-success"><i class="mdi mdi-check-circle me-1"></i>Connected</span>
+                <span class="text-muted small ms-2">since @_settings!.ConnectedUtc?.ToLocalTime().ToString("g")
+                    @if (_settings.RefreshTokenExpiresUtc is { } exp) { <text>· sign-in valid until @exp.ToLocalTime().ToString("d")</text> }</span>
+            }
+            else
+            {
+                <span class="text-muted">Not connected. Sign in with your @Opt.Environment.ToString().ToLower() seller account.</span>
+            }
+        </div>
+        <div>
+            @if (IsConnected)
+            {
+                <button class="btn btn-outline-secondary me-2" @onclick="Connect">Reconnect</button>
+                <button class="btn btn-outline-danger" @onclick="DisconnectAsync">Disconnect</button>
+            }
+            else
+            {
+                <button class="btn btn-primary" @onclick="Connect"><i class="mdi mdi-link-variant me-1"></i>Connect to eBay</button>
+            }
+        </div>
+    </div>
+</div>
+
+@if (!IsConnected || _settings is null)
+{
+    return;
+}
+
+<div class="row">
+    @* ---------- Business policies ---------- *@
+    <div class="col-lg-6 grid-margin stretch-card">
+        <div class="card">
+            <div class="card-body">
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                    <h4 class="card-title mb-0">Default policies</h4>
+                    <button class="btn btn-sm btn-outline-secondary" @onclick="LoadEbayDataAsync" disabled="@_busy">
+                        <i class="mdi mdi-refresh"></i>
+                    </button>
+                </div>
+
+                <PolicySelect Label="Shipping" Policies="_fulfillment" @bind-Value="_settings.DefaultFulfillmentPolicyId" />
+                <PolicySelect Label="Returns" Policies="_returns" @bind-Value="_settings.DefaultReturnPolicyId" />
+                <PolicySelect Label="Payment" Policies="_payments" @bind-Value="_settings.DefaultPaymentPolicyId" />
+
+                @if (_fulfillment.Count == 0 || _returns.Count == 0 || _payments.Count == 0)
+                {
+                    <div class="border border-secondary rounded p-3 mt-3">
+                        <p class="text-muted small mb-2">
+                            Missing policies? New sandbox accounts usually have none. Enable business policies, then create a starter set:
+                            free eBay Standard Envelope shipping, 30-day returns (buyer pays return shipping), and immediate payment.
+                        </p>
+                        <div class="form-check form-check-flat mb-2">
+                            <label class="form-check-label">
+                                <input type="checkbox" class="form-check-input" @bind="_starterReturnsAccepted" />
+                                Accept returns (30 days)
+                            </label>
+                        </div>
+                        <button class="btn btn-sm btn-outline-info me-2" @onclick="OptInAsync" disabled="@_busy">1. Enable business policies</button>
+                        <button class="btn btn-sm btn-outline-info" @onclick="CreateStarterPoliciesAsync" disabled="@_busy">2. Create starter policies</button>
+                    </div>
+                }
+            </div>
+        </div>
+    </div>
+
+    @* ---------- Location + defaults ---------- *@
+    <div class="col-lg-6 grid-margin stretch-card">
+        <div class="card">
+            <div class="card-body">
+                <h4 class="card-title">Ship-from location</h4>
+                @if (_locations.Count > 0)
+                {
+                    <select class="form-select mb-2" @bind="_settings.MerchantLocationKey">
+                        <option value="">Choose a location…</option>
+                        @foreach (var loc in _locations)
+                        {
+                            <option value="@loc.Key">@loc.Name (@loc.PostalCode) @(loc.Status == "ENABLED" ? "" : "· disabled")</option>
+                        }
+                    </select>
+                }
+                <div class="row g-2 align-items-end mb-4">
+                    <div class="col-5">
+                        <label class="form-label small text-muted">@(_locations.Count > 0 ? "Or add one: ZIP code" : "ZIP code")</label>
+                        <input class="form-control" maxlength="10" @bind="_newZip" />
+                    </div>
+                    <div class="col-4">
+                        <label class="form-label small text-muted">Name</label>
+                        <input class="form-control" maxlength="50" @bind="_newLocationName" />
+                    </div>
+                    <div class="col-3">
+                        <button class="btn btn-outline-info w-100" @onclick="CreateLocationAsync" disabled="@(_busy || string.IsNullOrWhiteSpace(_newZip))">Add</button>
+                    </div>
+                </div>
+
+                <h4 class="card-title">Listing defaults</h4>
+                <p class="text-muted small">Every listing is Buy It Now with Best Offer. You can change these per listing.</p>
+                <div class="row g-2">
+                    <div class="col-4">
+                        <label class="form-label small text-muted">Promotion ad rate %</label>
+                        <input type="number" step="0.1" min="0" max="100" class="form-control" @bind="_settings.DefaultPromotionPercent" />
+                        <small class="text-muted">General strategy. 0 = off.</small>
+                    </div>
+                    <div class="col-4">
+                        <label class="form-label small text-muted">Best Offer minimum %</label>
+                        <input type="number" step="1" min="1" max="99" class="form-control" @bind="_settings.BestOfferMinPercent" />
+                        <small class="text-muted">Lower offers auto-declined.</small>
+                    </div>
+                    <div class="col-4">
+                        <label class="form-label small text-muted">Auto-accept %</label>
+                        <input type="number" step="1" min="1" max="99" class="form-control" @bind="_settings.BestOfferAutoAcceptPercent" />
+                        <small class="text-muted">At or above: accepted.</small>
+                    </div>
+                </div>
+                <h4 class="card-title mt-4">eBay Store categories</h4>
+                <p class="text-muted small mb-1">
+                    One per line, spelled exactly as in your store. New listings pick Football, Baseball or Basketball
+                    from the card's sport, other sports get "Additional Sports &amp; TCG", and you can change it per listing.
+                </p>
+                <textarea class="form-control mb-2" rows="6" @bind="_settings.StoreCategories"></textarea>
+
+                @if (_settings.PromotionCampaignId is not null)
+                {
+                    <small class="text-muted d-block mt-2">Promotion campaign: @EbayListingService.CampaignName (@_settings.PromotionCampaignId)</small>
+                }
+            </div>
+        </div>
+    </div>
+</div>
+
+<button class="btn btn-success btn-lg mb-4" @onclick="SaveAsync" disabled="@_busy">
+    <i class="mdi mdi-content-save me-1"></i>Save defaults
+</button>
+
+@code {
+    [SupplyParameterFromQuery] public int? Connected { get; set; }
+    [SupplyParameterFromQuery] public string? Error { get; set; }
+
+    private EbayOptions Opt => EbayOpts.Value;
+
+    // Built from the address the app is running on, so they always match what eBay must redirect to.
+    private string CallbackUrl => Nav.BaseUri + "ebay/callback";
+    private string DeclinedUrl => Nav.BaseUri + "ebay/declined";
+    private EbaySettings? _settings;
+    private bool IsConnected => _settings?.RefreshTokenProtected is not null;
+
+    private List<EbayPolicy> _fulfillment = [];
+    private List<EbayPolicy> _returns = [];
+    private List<EbayPolicy> _payments = [];
+    private List<EbayLocation> _locations = [];
+
+    private string _newZip = "";
+    private string _newLocationName = "Card room";
+    private bool _starterReturnsAccepted = true;
+    private bool _busy;
+    private string? _message;
+    private bool _messageIsError;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!Opt.IsConfigured) return;
+        _settings = await Listings.GetSettingsAsync();
+        if (string.IsNullOrWhiteSpace(_settings.StoreCategories))
+            _settings.StoreCategories = EbaySettings.DefaultStoreCategories;
+        if (IsConnected) await LoadEbayDataAsync();
+    }
+
+    private void Connect()
+    {
+        try
+        {
+            Nav.NavigateTo(Auth.BuildConsentUrl(), forceLoad: true);
+        }
+        catch (Exception ex)
+        {
+            Show(ex.Message, error: true);
+        }
+    }
+
+    private async Task DisconnectAsync()
+    {
+        await Auth.DisconnectAsync();
+        _settings = await Listings.GetSettingsAsync();
+        Show("Disconnected from eBay.");
+    }
+
+    private async Task LoadEbayDataAsync()
+    {
+        await RunAsync(async () =>
+        {
+            // Policies fail with an error until business policies are enabled; show what loads.
+            var problems = new List<string>();
+            _fulfillment = await TryLoad(Api.GetFulfillmentPoliciesAsync, problems);
+            _returns = await TryLoad(Api.GetReturnPoliciesAsync, problems);
+            _payments = await TryLoad(Api.GetPaymentPoliciesAsync, problems);
+            _locations = await TryLoad(Api.GetInventoryLocationsAsync, problems);
+
+            // Pick the only option automatically when there's exactly one.
+            _settings!.DefaultFulfillmentPolicyId ??= _fulfillment.Count == 1 ? _fulfillment[0].Id : null;
+            _settings.DefaultReturnPolicyId ??= _returns.Count == 1 ? _returns[0].Id : null;
+            _settings.DefaultPaymentPolicyId ??= _payments.Count == 1 ? _payments[0].Id : null;
+            _settings.MerchantLocationKey ??= _locations.Count == 1 ? _locations[0].Key : null;
+
+            if (problems.Count > 0) Show(string.Join(" ", problems.Distinct()), error: true);
+        }, successMessage: null);
+    }
+
+    private static async Task<List<T>> TryLoad<T>(Func<CancellationToken, Task<List<T>>> load, List<string> problems)
+    {
+        try { return await load(default); }
+        catch (EbayApiException ex) { problems.Add(ex.Message); return []; }
+    }
+
+    private Task OptInAsync() => RunAsync(async () =>
+    {
+        await Api.OptInToBusinessPoliciesAsync();
+    }, "Business policies enabled. eBay can take a few minutes to apply this; then create the starter policies.");
+
+    private Task CreateStarterPoliciesAsync() => RunAsync(async () =>
+    {
+        if (_fulfillment.Count == 0)
+            _settings!.DefaultFulfillmentPolicyId = await Api.CreateStandardEnvelopeFulfillmentPolicyAsync("Free eBay Standard Envelope");
+        if (_returns.Count == 0)
+            _settings!.DefaultReturnPolicyId = _starterReturnsAccepted
+                ? await Api.CreateReturnPolicyAsync("30 Day Returns", true, 30)
+                : await Api.CreateReturnPolicyAsync("No Returns", false, 0);
+        if (_payments.Count == 0)
+            _settings!.DefaultPaymentPolicyId = await Api.CreatePaymentPolicyAsync("Immediate Payment");
+
+        await Listings.SaveDefaultsAsync(_settings!);
+        await LoadEbayDataAsync();
+    }, "Starter policies created and set as defaults.");
+
+    private Task CreateLocationAsync() => RunAsync(async () =>
+    {
+        var zip = _newZip.Trim();
+        var key = $"ct3k-{zip}".ToLowerInvariant();
+        await Api.CreateInventoryLocationAsync(key, string.IsNullOrWhiteSpace(_newLocationName) ? "Card room" : _newLocationName.Trim(), zip, "US");
+        _settings!.MerchantLocationKey = key;
+        await Listings.SaveDefaultsAsync(_settings);
+        _locations = await Api.GetInventoryLocationsAsync();
+        _newZip = "";
+    }, "Location added and set as default.");
+
+    private Task SaveAsync() => RunAsync(async () =>
+    {
+        if (_settings!.BestOfferMinPercent >= _settings.BestOfferAutoAcceptPercent)
+            throw new InvalidOperationException("The Best Offer minimum must be lower than the auto-accept percentage.");
+        if (_settings.DefaultPromotionPercent != 0 && _settings.DefaultPromotionPercent < EbayListingService.MinPromotionPercent)
+            throw new InvalidOperationException($"eBay's minimum promotion ad rate is {EbayListingService.MinPromotionPercent}% (or 0 for off).");
+        await Listings.SaveDefaultsAsync(_settings);
+    }, "Defaults saved.");
+
+    private async Task RunAsync(Func<Task> action, string? successMessage)
+    {
+        _busy = true;
+        _message = null;
+        try
+        {
+            await action();
+            if (successMessage is not null) Show(successMessage);
+        }
+        catch (Exception ex) when (ex is EbayApiException or InvalidOperationException)
+        {
+            Show(ex.Message, error: true);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private void Show(string message, bool error = false)
+    {
+        _message = message;
+        _messageIsError = error;
+    }
+}

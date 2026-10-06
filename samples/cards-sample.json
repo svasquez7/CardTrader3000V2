@@ -1,0 +1,31 @@
+[
+  {
+    "card_set": "2010 Topps Football",
+    "player": "Jimmy Graham",
+    "card_number": "265",
+    "parallel": "Base",
+    "quantity": 2,
+    "team": "New Orleans Saints",
+    "is_rookie": true,
+    "estimated_list_price": 4.99,
+    "sgc_grading_candidate": "High Prospect",
+    "sales_strategy": "List individually at BIN; strong SGC 10 candidate if centering is clean.",
+    "ebay_title": "2010 Topps #265 Jimmy Graham RC Rookie Card New Orleans Saints",
+    "ebay_description": "Card Details:\nPlayer: Jimmy Graham\nSet: 2010 Topps Football\nCard #: 265\nParallel: Base\nTeam: New Orleans Saints\n\nCondition: Ungraded - Near Mint or Better. Please see photos.\n\nShipping & Handling: Ships via eBay Standard Envelope with tracking, in a penny sleeve and top loader inside a team bag.",
+    "status": "In Stock"
+  },
+  {
+    "card_set": "2013 Topps Football",
+    "player": "Von Miller",
+    "card_number": "290",
+    "parallel": "Base",
+    "team": "Denver Broncos"
+  },
+  {
+    "card_set": "1991 Fleer",
+    "player": "Common Player",
+    "card_number": "112",
+    "quantity": 5,
+    "price_with_claude": false
+  }
+]

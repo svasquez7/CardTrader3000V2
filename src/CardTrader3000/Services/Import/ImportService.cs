@@ -31,15 +31,25 @@ public sealed class ImportService(
     /// <param name="priceByDefault">Price flag for lines that don't have their own 5th column.</param>
     public ParseResult Preview(string? text, bool priceByDefault = true) => CardLineParser.Parse(text, priceByDefault);
 
+    /// <summary>Parse a JSON import for the preview.</summary>
+    public ParseResult PreviewJson(string? json, bool priceByDefault = true) =>
+        JsonCardParser.Parse(json, priceByDefault, fees.Rates.MaxTitleLength);
+
     public Task<SubmitResult> SubmitCsvAsync(string csvText, string fileName, bool priceByDefault = true, CancellationToken ct = default) =>
-        SubmitAsync(ImportSource.Csv, Path.GetFileName(fileName), csvText, priceByDefault, ct);
+        SubmitAsync(ImportSource.Csv, Path.GetFileName(fileName), CardLineParser.Parse(csvText, priceByDefault), ct);
 
     public Task<SubmitResult> SubmitManualAsync(string text, bool priceByDefault = true, CancellationToken ct = default) =>
-        SubmitAsync(ImportSource.Manual, null, text, priceByDefault, ct);
+        SubmitAsync(ImportSource.Manual, null, CardLineParser.Parse(text, priceByDefault), ct);
 
-    private async Task<SubmitResult> SubmitAsync(ImportSource source, string? fileName, string text, bool priceByDefault, CancellationToken ct)
+    /// <summary>
+    /// JSON import. Cards with a list price are stored as given (no Claude call); cards without one
+    /// are priced by Claude or added track-only per their flag. Any provided field wins over Claude's.
+    /// </summary>
+    public Task<SubmitResult> SubmitJsonAsync(string json, string fileName, bool priceByDefault = true, CancellationToken ct = default) =>
+        SubmitAsync(ImportSource.Json, Path.GetFileName(fileName), PreviewJson(json, priceByDefault), ct);
+
+    private async Task<SubmitResult> SubmitAsync(ImportSource source, string? fileName, ParseResult parse, CancellationToken ct)
     {
-        var parse = CardLineParser.Parse(text, priceByDefault);
         if (parse.Lines.Count == 0)
             return new SubmitResult(null, parse);
 
@@ -67,7 +77,10 @@ public sealed class ImportService(
                 CardNumber = d.First.CardNumber,
                 Parallel = d.First.Parallel,
                 QuantityAdded = d.Quantity,
-                SkipPricing = !d.Price,
+                // A price supplied in the file always wins: no Claude call, and not "track only".
+                PricingProvided = d.First.Data?.ListPrice is not null,
+                SkipPricing = !d.Price && d.First.Data?.ListPrice is null,
+                ProvidedDataJson = d.First.Data?.Serialize(),
                 Status = ImportItemStatus.Pending
             }).ToList()
         };
@@ -78,8 +91,9 @@ public sealed class ImportService(
             await db.SaveChangesAsync(ct);
         }
 
-        logger.LogInformation("Queued import batch {BatchId}: {Lines} lines, {Distinct} distinct cards ({TrackOnly} track-only), {Skipped} skipped",
-            batch.Id, parse.Lines.Count, distinct.Count, distinct.Count(d => !d.Price), parse.Errors.Count);
+        logger.LogInformation("Queued {Source} batch {BatchId}: {Lines} lines, {Distinct} distinct cards ({Provided} with provided pricing, {TrackOnly} track-only), {Skipped} skipped",
+            source, batch.Id, parse.Lines.Count, distinct.Count,
+            batch.Items.Count(i => i.PricingProvided), batch.Items.Count(i => i.SkipPricing), parse.Errors.Count);
 
         tracker.Report(new ImportProgress(batch.Id, ImportBatchStatus.Pending, 0, batch.Items.Count, "Queued"));
         await queue.EnqueueAsync(batch.Id, ct);
