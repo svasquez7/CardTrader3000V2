@@ -29,6 +29,9 @@ public sealed class EbayAuthService(
     private readonly IDataProtector _protector = protectionProvider.CreateProtector("CardTrader3000.EbayTokens.v1");
     private readonly SemaphoreSlim _refreshLock = new(1, 1);
 
+    // Application tokens (client credentials) by scope: used for public data like price research.
+    private readonly ConcurrentDictionary<string, (string Token, DateTime ExpiresUtc)> _appTokens = new();
+
     // Pending sign-in "state" values (CSRF protection), valid for 15 minutes.
     private readonly ConcurrentDictionary<string, DateTime> _pendingStates = new();
 
@@ -164,6 +167,28 @@ public sealed class EbayAuthService(
         db.EbaySettings.Add(settings);
         await db.SaveChangesAsync(ct);
         return settings;
+    }
+
+    /// <summary>
+    /// An application access token (client credentials grant) for public APIs such as Browse.
+    /// Needs only the app keys, not a signed-in user. Cached until shortly before it expires.
+    /// </summary>
+    public async Task<string> GetApplicationTokenAsync(string scope, CancellationToken ct = default)
+    {
+        if (!_opt.IsConfigured)
+            throw new EbayApiException("eBay isn't configured. Set Ebay:ClientId, Ebay:ClientSecret and Ebay:RuName (see README).");
+
+        if (_appTokens.TryGetValue(scope, out var cached) && cached.ExpiresUtc > DateTime.UtcNow)
+            return cached.Token;
+
+        var token = await RequestTokenAsync(new Dictionary<string, string>
+        {
+            ["grant_type"] = "client_credentials",
+            ["scope"] = scope
+        }, ct);
+
+        _appTokens[scope] = (token.AccessToken, DateTime.UtcNow.AddSeconds(Math.Max(60, token.ExpiresIn - 120)));
+        return token.AccessToken;
     }
 
     private async Task<TokenResponse> RequestTokenAsync(Dictionary<string, string> form, CancellationToken ct)

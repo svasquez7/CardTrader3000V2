@@ -58,6 +58,7 @@ builder.Services.AddHttpClient(EbayAuthService.HttpClientName);
 builder.Services.AddSingleton<EbayAuthService>();
 builder.Services.AddHttpClient<EbayApiClient>(http => http.Timeout = TimeSpan.FromSeconds(100));
 builder.Services.AddSingleton<ListingImageStore>();
+builder.Services.AddHttpClient<EbayMarketDataService>(http => http.Timeout = TimeSpan.FromSeconds(30));
 builder.Services.AddScoped<EbayListingService>();
 
 var app = builder.Build();

@@ -69,11 +69,17 @@ Open a card in **Inventory** and click **List on eBay**. This opens a listing sc
 
 - **Pre-filled from the card:**
   - title, description, price (the card's estimate), quantity (your stock)
+  - every description ends with the combined-shipping line ("🚀 Maximize your value! …"). It's added on draft, save and publish, never twice, so older drafts and Claude/JSON descriptions get it too
   - condition: Ungraded, Near Mint or Better
   - item specifics: sport, league, player, team, manufacturer, set, season, card number, parallel, rookie and so on
   - your default policies, Best Offer percentages and promotion rate
 - **Store category:** pick one of your eBay Store categories. The list is set in eBay Settings and defaults to Additional Sports & TCG, Apparel, Baseball, Basketball, Football and Other. New listings choose Football, Baseball or Basketball from the card's sport; other sports get Additional Sports & TCG. eBay's docs show category paths (`/Football`) while sellers report plain names working, so the app sends `/Name` and retries with `Name` if eBay rejects it. Store categories only work on accounts with an eBay Store subscription, and sandbox test users usually don't have one; choose **(none)** there.
 - **Photos:** upload up to 24 (12 MB each), or paste `https://` image URLs. Reorder them; the first is the gallery photo. Uploaded photos are stored in `App_Data/listing-images` and sent to eBay's picture hosting (Media API) when you publish.
+- **Market prices** (the chart button next to the price): searches eBay Sports Trading Card Singles, ungraded only by default, for **this card** (set, player, number and parallel) or **any card of the player**, and you can edit the search.
+  - **Active Buy It Now listings** come from the Browse API using an app token, so no sign-in is needed.
+  - **Sold prices from the last 90 days** come from the Marketplace Insights API. That's a limited-release API eBay must approve for your app; without approval the panel shows an "open sold listings on eBay" link instead.
+  - Each side shows the count, low, median, average and high, plus **Use median** and **Use low** buttons that fill in the price.
+  - With sandbox keys, eBay returns test data, usually empty. Real numbers need production keys.
 - **Live figures:** the Best Offer auto-decline and auto-accept amounts, the promotion fee per sale, and the estimated net after eBay fees, the envelope and the ad fee.
 - **Publish** runs these steps:
   1. upload the photos

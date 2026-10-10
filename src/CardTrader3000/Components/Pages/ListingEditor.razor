@@ -63,6 +63,12 @@
     <div class="alert alert-warning py-2 small">Couldn't load your eBay policies: @_policyLoadError <a href="ebay">eBay Settings</a></div>
 }
 
+@if (_showMarket)
+{
+    <MarketPricesPanel Card="_listing.InventoryCard" FallbackQuery="@_listing.Title"
+                       OnUsePrice="UseMarketPrice" OnClose="() => _showMarket = false" />
+}
+
 <div class="row">
     @* ================= Left: listing details ================= *@
     <div class="col-xl-8 grid-margin">
@@ -85,7 +91,13 @@
                 <div class="row g-3 mb-3">
                     <div class="col-md-3">
                         <label class="form-label small text-muted">Buy It Now price ($)</label>
-                        <input type="number" step="0.01" min="0" class="form-control" @bind="_listing.Price" />
+                        <div class="input-group">
+                            <input type="number" step="0.01" min="0" class="form-control" @bind="_listing.Price" />
+                            <button type="button" class="btn @(_showMarket ? "btn-info" : "btn-outline-info")" title="Recent eBay listing and sold prices"
+                                    @onclick="() => _showMarket = !_showMarket">
+                                <i class="mdi mdi-chart-line"></i>
+                            </button>
+                        </div>
                         @if (_listing.InventoryCard is { IsPriced: true } priced && priced.EstimatedListPrice != _listing.Price)
                         {
                             <small class="text-muted">Estimate: @priced.EstimatedListPrice.ToString("C")</small>
@@ -148,8 +160,8 @@
                 </div>
 
                 <label class="form-label small text-muted">Description</label>
-                <textarea class="form-control mb-1" rows="10" @bind="_listing.Description" @bind:event="oninput"></textarea>
-                <small class="text-muted">Plain text. Line breaks are kept on eBay.</small>
+                <textarea class="form-control mb-1 description-editor" rows="18" @bind="_listing.Description" @bind:event="oninput"></textarea>
+                <small class="text-muted">Plain text. Line breaks are kept on eBay. The combined-shipping line (🚀 Maximize your value!…) is always added at the end when you save or publish.</small>
             </div>
         </div>
 
@@ -299,6 +311,14 @@
     private List<EbayPolicy> _payments = [];
     private string? _policyLoadError;
     private List<string> _storeCategories = [];
+    private bool _showMarket;
+
+    /// <summary>"Use median/low" from the market panel: sets the price (not saved until Save/Publish).</summary>
+    private void UseMarketPrice(decimal price)
+    {
+        _listing!.Price = Math.Round(price, 2, MidpointRounding.AwayFromZero);
+        _result = new PublishResult(true, $"Price set to {_listing.Price:C} from market data. Save or publish to keep it.", null, []);
+    }
 
     private string _imageUrl = "";
     private bool _busy;

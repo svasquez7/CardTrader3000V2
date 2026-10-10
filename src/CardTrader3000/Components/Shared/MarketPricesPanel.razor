@@ -1,0 +1,130 @@
+@using CardTrader3000.Services.Ebay
+@using Microsoft.Extensions.Options
+@inject EbayMarketDataService Market
+@inject IOptions<EbayOptions> EbayOpts
+
+<div class="card mb-4 border border-info">
+    <div class="card-body">
+        <div class="d-flex justify-content-between align-items-center mb-3">
+            <h4 class="card-title mb-0"><i class="mdi mdi-chart-line me-1"></i>Market prices</h4>
+            <button type="button" class="btn-close btn-close-white" aria-label="Close" @onclick="OnClose"></button>
+        </div>
+
+        @* ---------- Search ---------- *@
+        <div class="d-flex flex-wrap gap-2 align-items-center mb-2">
+            @if (Card is not null)
+            {
+                <div class="btn-group btn-group-sm" role="group">
+                    <button type="button" class="btn @(_scope == Scope.Card ? "btn-primary" : "btn-outline-secondary")" @onclick="() => SetScopeAsync(Scope.Card)">This card</button>
+                    <button type="button" class="btn @(_scope == Scope.Player ? "btn-primary" : "btn-outline-secondary")" @onclick="() => SetScopeAsync(Scope.Player)">@Card.PlayerName (any card)</button>
+                </div>
+            }
+            <div class="form-check form-check-flat mb-0 ms-2">
+                <label class="form-check-label small">
+                    <input type="checkbox" class="form-check-input" @bind="_ungradedOnly" @bind:after="SearchAsync" />
+                    Ungraded only
+                </label>
+            </div>
+        </div>
+        <div class="input-group input-group-sm mb-2">
+            <input class="form-control" @bind="_query" @bind:event="oninput" @onkeydown="OnKeyDown" placeholder="Search eBay…" />
+            <button class="btn btn-info" @onclick="SearchAsync" disabled="@(_loading || string.IsNullOrWhiteSpace(_query))">
+                @if (_loading) { <i class="mdi mdi-loading mdi-spin"></i> } else { <i class="mdi mdi-magnify"></i> } Search
+            </button>
+        </div>
+        <small class="text-muted d-block mb-3">
+            Sports Trading Card Singles @(_ungradedOnly ? "· ungraded only" : "") · prices are item price; shipping shown separately.
+            @if (EbayOpts.Value.Environment == EbayEnvironment.Sandbox)
+            {
+                <span class="text-warning"> Sandbox keys return eBay's test data (often empty). Production keys show real listings.</span>
+            }
+        </small>
+
+        <div class="row">
+            @* ---------- Active ---------- *@
+            <div class="col-lg-6 mb-3">
+                <h5 class="mb-2">Active Buy It Now <a class="small ms-1" href="@Market.ActiveSearchUrl(_query)" target="_blank" rel="noopener">open on eBay</a></h5>
+                <ResultBlock Result="_active" Loading="_loading" OnUsePrice="UsePriceAsync" ShowDates="false" />
+            </div>
+
+            @* ---------- Sold ---------- *@
+            <div class="col-lg-6 mb-3">
+                <h5 class="mb-2">Sold, last 90 days <a class="small ms-1" href="@Market.SoldSearchUrl(_query, _ungradedOnly)" target="_blank" rel="noopener">open on eBay</a></h5>
+                @if (_sold is { AccessDenied: true })
+                {
+                    <div class="alert alert-secondary small mb-0">
+                        Sold prices come from eBay's Marketplace Insights API, which eBay only enables for approved apps,
+                        and yours isn't approved for it.
+                        <a href="@Market.SoldSearchUrl(_query, _ungradedOnly)" target="_blank" rel="noopener">Open the sold listings on eBay</a>
+                        to see them there.
+                    </div>
+                }
+                else
+                {
+                    <ResultBlock Result="_sold" Loading="_loading" OnUsePrice="UsePriceAsync" ShowDates="true" />
+                }
+            </div>
+        </div>
+    </div>
+</div>
+
+@code {
+    /// <summary>The card being listed (enables the "This card" / player toggle).</summary>
+    [Parameter] public InventoryCard? Card { get; set; }
+
+    /// <summary>Search text when there's no card (e.g. the listing title).</summary>
+    [Parameter] public string FallbackQuery { get; set; } = "";
+
+    /// <summary>Sets the listing's price.</summary>
+    [Parameter] public EventCallback<decimal> OnUsePrice { get; set; }
+
+    [Parameter] public EventCallback OnClose { get; set; }
+
+    private enum Scope { Card, Player }
+
+    private Scope _scope = Scope.Card;
+    private string _query = "";
+    private bool _ungradedOnly = true;
+    private bool _loading;
+    private MarketResult? _active;
+    private MarketResult? _sold;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _query = Card is not null ? EbayMarketDataService.CardQuery(Card) : FallbackQuery;
+        await SearchAsync();
+    }
+
+    private async Task SetScopeAsync(Scope scope)
+    {
+        if (Card is null) return;
+        _scope = scope;
+        _query = scope == Scope.Card ? EbayMarketDataService.CardQuery(Card) : EbayMarketDataService.PlayerQuery(Card);
+        await SearchAsync();
+    }
+
+    private async Task OnKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter") await SearchAsync();
+    }
+
+    private async Task SearchAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_query) || _loading) return;
+        _loading = true;
+        try
+        {
+            var active = Market.SearchActiveAsync(_query.Trim(), _ungradedOnly);
+            var sold = Market.SearchSoldAsync(_query.Trim(), _ungradedOnly);
+            await Task.WhenAll(active, sold);
+            _active = active.Result;
+            _sold = sold.Result;
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private Task UsePriceAsync(decimal price) => OnUsePrice.InvokeAsync(price);
+}

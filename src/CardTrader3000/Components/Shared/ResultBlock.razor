@@ -1,0 +1,75 @@
+@using CardTrader3000.Services.Ebay
+
+@* Stats + top results for one market search (active or sold). *@
+@if (Result is null)
+{
+    <p class="text-muted small">@(Loading ? "Searching…" : "")</p>
+}
+else if (Result.Error is not null && !Result.HasData)
+{
+    <div class="alert alert-warning small mb-0">@Result.Error</div>
+}
+else if (!Result.HasData)
+{
+    <p class="text-muted small">No matches. Try "any card" for the player, or shorten the search.</p>
+}
+else
+{
+    <div class="d-flex flex-wrap gap-3 mb-2 small">
+        <div><span class="text-muted">Found</span> <strong>@Result.TotalMatches.ToString("N0")</strong></div>
+        <div><span class="text-muted">Low</span> <strong>@Result.Low.ToString("C")</strong></div>
+        <div><span class="text-muted">Median</span> <strong class="text-success">@Result.Median.ToString("C")</strong></div>
+        <div><span class="text-muted">Avg</span> <strong>@Result.Average.ToString("C")</strong></div>
+        <div><span class="text-muted">High</span> <strong>@Result.High.ToString("C")</strong></div>
+    </div>
+    <div class="d-flex gap-2 mb-2">
+        <button class="btn btn-sm btn-outline-success" @onclick="() => OnUsePrice.InvokeAsync(Result.Median)">Use median @Result.Median.ToString("C")</button>
+        <button class="btn btn-sm btn-outline-secondary" @onclick="() => OnUsePrice.InvokeAsync(Result.Low)">Use low @Result.Low.ToString("C")</button>
+    </div>
+    <small class="text-muted d-block mb-2">Stats use the first @Result.Items.Count results. Check that titles match your card (parallel, grading).</small>
+
+    <div style="max-height: 360px; overflow-y: auto">
+        <table class="table table-sm mb-0">
+            <tbody>
+                @foreach (var item in Result.Items.Take(MaxRows))
+                {
+                    <tr>
+                        <td style="width:44px">
+                            @if (item.ImageUrl is not null)
+                            {
+                                <img src="@item.ImageUrl" alt="" style="width:40px;height:40px;object-fit:contain" />
+                            }
+                        </td>
+                        <td class="small">
+                            @if (item.Url is not null)
+                            {
+                                <a href="@item.Url" target="_blank" rel="noopener" class="text-white">@item.Title</a>
+                            }
+                            else
+                            {
+                                <span>@item.Title</span>
+                            }
+                            @if (ShowDates && item.SoldDate is { } sold)
+                            {
+                                <div class="text-muted">sold @sold.ToLocalTime().ToString("d")@(item.SoldQuantity > 1 ? $" · {item.SoldQuantity} sold" : "")</div>
+                            }
+                        </td>
+                        <td class="text-end small text-nowrap">
+                            <strong>@item.Price.ToString("C")</strong>
+                            <div class="text-muted">@(item.Shipping is null ? "ship ?" : item.Shipping == 0 ? "free ship" : $"+{item.Shipping:C} ship")</div>
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+}
+
+@code {
+    private const int MaxRows = 25;
+
+    [Parameter] public MarketResult? Result { get; set; }
+    [Parameter] public bool Loading { get; set; }
+    [Parameter] public bool ShowDates { get; set; }
+    [Parameter] public EventCallback<decimal> OnUsePrice { get; set; }
+}

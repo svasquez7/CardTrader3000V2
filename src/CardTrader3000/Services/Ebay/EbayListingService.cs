@@ -85,7 +85,7 @@ public sealed class EbayListingService(
             Status = EbayListingStatus.Draft,
             Sku = sku,
             Title = Truncate(string.IsNullOrWhiteSpace(card.EbayTitle) ? FallbackTitle(card) : card.EbayTitle, 80),
-            Description = string.IsNullOrWhiteSpace(card.EbayDescription) ? FallbackDescription(card) : card.EbayDescription,
+            Description = WithFooter(string.IsNullOrWhiteSpace(card.EbayDescription) ? FallbackDescription(card) : card.EbayDescription),
             Price = card.EstimatedListPrice,
             Quantity = Math.Max(1, card.Quantity),
             CategoryId = _opt.CategoryId,
@@ -136,7 +136,7 @@ public sealed class EbayListingService(
                 ?? throw new InvalidOperationException("Listing not found.");
 
         l.Title = Truncate(edited.Title.Trim(), 80);
-        l.Description = edited.Description.Trim();
+        l.Description = WithFooter(edited.Description);
         l.Price = Math.Round(edited.Price, 2, MidpointRounding.AwayFromZero);
         l.Quantity = edited.Quantity;
         l.CardConditionValueId = edited.CardConditionValueId;
@@ -240,7 +240,7 @@ public sealed class EbayListingService(
         if (string.IsNullOrWhiteSpace(l.Title)) errors.Add("Title is required.");
         else if (l.Title.Length > 80) errors.Add("Title must be 80 characters or fewer.");
         if (string.IsNullOrWhiteSpace(l.Description)) errors.Add("Description is required.");
-        else if (ToHtml(l.Description).Length > 4000) errors.Add("Description is too long for eBay (4,000 characters including formatting).");
+        else if (ToHtml(WithFooter(l.Description)).Length > 4000) errors.Add("Description is too long for eBay (4,000 characters including formatting).");
         if (l.Price <= 0) errors.Add("Price must be greater than $0.");
         if (l.Quantity < 1) errors.Add("Quantity must be at least 1.");
         if (l.Images.Count == 0) errors.Add("Add at least one photo.");
@@ -296,7 +296,7 @@ public sealed class EbayListingService(
 
             // 2. Inventory item: product details, condition, stock.
             progress?.Report("Saving the inventory item…");
-            var description = ToHtml(listing.Description);
+            var description = ToHtml(WithFooter(listing.Description));
             await api.PutInventoryItemAsync(listing.Sku, new
             {
                 availability = new { shipToLocationAvailability = new { quantity = listing.Quantity } },
@@ -615,6 +615,18 @@ public sealed class EbayListingService(
         var all = await db.EbayListingImages.Where(i => i.EbayListingId == listingId).OrderBy(i => i.SortOrder).ToListAsync(ct);
         for (var i = 0; i < all.Count; i++) all[i].SortOrder = i;
         await db.SaveChangesAsync(ct);
+    }
+
+    /// <summary>Closing line on every listing description (promotes combined shipping).</summary>
+    public const string CombinedShippingFooter =
+        "🚀 Maximize your value! Take advantage of combined shipping by adding multiple cards from my store to your cart. Please check out just once to save on delivery fees.";
+
+    /// <summary>Appends <see cref="CombinedShippingFooter"/> after a blank line unless the text already ends with it.</summary>
+    public static string WithFooter(string? text)
+    {
+        var body = (text ?? "").Replace("\r\n", "\n").TrimEnd();
+        if (body.EndsWith(CombinedShippingFooter, StringComparison.Ordinal)) return body;
+        return body.Length == 0 ? CombinedShippingFooter : body + "\n\n" + CombinedShippingFooter;
     }
 
     /// <summary>Plain-text description → eBay-safe HTML (encoded, line breaks kept).</summary>
