@@ -109,8 +109,8 @@
                     </div>
                     <div class="col-md-4">
                         <label class="form-label small text-muted">Condition (Ungraded)</label>
-                        <select class="form-select" @bind="_listing.CardConditionValueId">
-                            @foreach (var (id, label) in CardConditions)
+                        <select class="form-select" @bind="_listing.CardConditionValueId" @bind:after="OnConditionChanged">
+                            @foreach (var (id, label) in CardConditions.All)
                             {
                                 <option value="@id">@label</option>
                             }
@@ -161,7 +161,7 @@
 
                 <label class="form-label small text-muted">Description</label>
                 <textarea class="form-control mb-1 description-editor" rows="18" @bind="_listing.Description" @bind:event="oninput"></textarea>
-                <small class="text-muted">Plain text. Line breaks are kept on eBay. The combined-shipping line (🚀 Maximize your value!…) is always added at the end when you save or publish.</small>
+                <small class="text-muted">Plain text. Line breaks are kept on eBay. The combined-shipping line (🚀 Maximize your value!…) is always added at the end when you save or publish. The "Condition: Ungraded - …" line follows the Condition dropdown.</small>
             </div>
         </div>
 
@@ -295,13 +295,12 @@
         public string Value { get; set; } = "";
     }
 
-    private static readonly (string Id, string Label)[] CardConditions =
-    [
-        ("400010", "Near Mint or Better"),
-        ("400011", "Excellent"),
-        ("400012", "Very Good"),
-        ("400013", "Poor")
-    ];
+    /// <summary>Keeps the description's "Condition: Ungraded - …" line in sync with the dropdown.</summary>
+    private void OnConditionChanged()
+    {
+        if (_listing is null) return;
+        _listing.Description = CardConditions.ApplyToDescription(_listing.Description, _listing.CardConditionValueId);
+    }
 
     private EbayListing? _listing;
     private bool _loaded;

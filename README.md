@@ -69,6 +69,7 @@ Open a card in **Inventory** and click **List on eBay**. This opens a listing sc
 
 - **Pre-filled from the card:**
   - title, description, price (the card's estimate), quantity (your stock)
+  - the description's "Condition: Ungraded - …" line follows the Condition dropdown (Near Mint or Better by default) and updates as you change it
   - every description ends with the combined-shipping line ("🚀 Maximize your value! …"). It's added on draft, save and publish, never twice, so older drafts and Claude/JSON descriptions get it too
   - condition: Ungraded, Near Mint or Better
   - item specifics: sport, league, player, team, manufacturer, set, season, card number, parallel, rookie and so on

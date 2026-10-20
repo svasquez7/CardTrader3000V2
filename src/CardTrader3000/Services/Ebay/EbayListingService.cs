@@ -89,7 +89,7 @@ public sealed class EbayListingService(
             Price = card.EstimatedListPrice,
             Quantity = Math.Max(1, card.Quantity),
             CategoryId = _opt.CategoryId,
-            CardConditionValueId = "400010", // Near Mint or Better
+            CardConditionValueId = CardConditions.DefaultId, // Near Mint or Better
             AspectsJson = CardAspects.Serialize(CardAspects.FromCard(card)),
             FulfillmentPolicyId = settings.DefaultFulfillmentPolicyId,
             ReturnPolicyId = settings.DefaultReturnPolicyId,
@@ -136,7 +136,7 @@ public sealed class EbayListingService(
                 ?? throw new InvalidOperationException("Listing not found.");
 
         l.Title = Truncate(edited.Title.Trim(), 80);
-        l.Description = WithFooter(edited.Description);
+        l.Description = WithFooter(CardConditions.ApplyToDescription(edited.Description, edited.CardConditionValueId));
         l.Price = Math.Round(edited.Price, 2, MidpointRounding.AwayFromZero);
         l.Quantity = edited.Quantity;
         l.CardConditionValueId = edited.CardConditionValueId;
@@ -296,7 +296,7 @@ public sealed class EbayListingService(
 
             // 2. Inventory item: product details, condition, stock.
             progress?.Report("Saving the inventory item…");
-            var description = ToHtml(WithFooter(listing.Description));
+            var description = ToHtml(WithFooter(CardConditions.ApplyToDescription(listing.Description, listing.CardConditionValueId)));
             await api.PutInventoryItemAsync(listing.Sku, new
             {
                 availability = new { shipToLocationAvailability = new { quantity = listing.Quantity } },
